@@ -109,6 +109,8 @@
   .chip.ok { background: rgba(47,191,113,.16); color: #6fe0a3; }
   .chip.no { background: rgba(239,83,80,.16); color: #ff8f8c; }
   .chip.paid { background: rgba(245,165,36,.14); color: var(--warn); }
+  tr.abd > td:not(:nth-last-child(-n+3)) { opacity: .45; }
+  button.link.abdbtn { color: var(--warn); }
   tr.det > td { white-space: normal; background: var(--panel2) !important; }
   .ok { color: var(--good); } .no { color: var(--bad); }
   .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 800; letter-spacing: .4px; }
@@ -599,6 +601,7 @@ function renderAll(keepPickers) {
 
 function renderKpis() {
   const S = R.S, N = names(), pendingN = state.matches.filter(m => m.result === null).length;
+  const abdN = state.matches.filter(m => m.result === 'NR').length;
   let best = -1;
   S.ex.forEach((e, i) => { if (e.n && (best < 0 || e.c / e.n > S.ex[best].c / S.ex[best].n)) best = i; });
   const hi = EV.buckets.filter(b => b.lab === 'STRONG' || b.lab === 'GOOD');
@@ -606,7 +609,7 @@ function renderKpis() {
   const gain = EV.decisive ? (EV.sysOnDecisive - EV.majC) / EV.decisive : NaN;
   const k = (c, ic, l, v, s) => `<div class="kpi" style="--c:${c}"><div class="l">${ic} ${l}</div><div class="v">${v}</div><div class="s">${s}</div></div>`;
   $('#kpis').innerHTML =
-    k('var(--mut)', '🗂️', 'Completed Matches', EV.n, `${pendingN} pending`) +
+    k('var(--mut)', '🗂️', 'Completed Matches', EV.n, `${pendingN} pending${abdN ? ` · ${abdN} abandoned` : ''}`) +
     k('var(--acc)', '🤖', 'System Accuracy', pct(EV.sys / EV.n), EV.n ? `${EV.sys}/${EV.n} sahi` : 'result daalo') +
     k('var(--warn)', '👥', 'Majority Accuracy', pct(EV.majC / EV.decisive), EV.decisive ? `System same matches pe ${pct(EV.sysOnDecisive / EV.decisive)} <b class="${gain >= 0 ? 'ok' : 'no'}">(${gain >= 0 ? '+' : ''}${(gain * 100).toFixed(1)})</b>` : '2-2 splits excluded') +
     k(best >= 0 ? `var(--e${best})` : 'var(--mut)', '🏆', 'Best Expert', best >= 0 ? esc(N[best]) : '—', best >= 0 ? `${pct(S.ex[best].c / S.ex[best].n)} (${S.ex[best].c}/${S.ex[best].n})` : 'abhi data nahi') +
@@ -629,8 +632,8 @@ function renderTable() {
     const { m, pred } = R.rows[idx], done = E.isDone(m), tn = [m.t1, m.t2];
     const sp = E.splitOf(m.preds);
     const mark = done ? (pred.pick === m.result ? '<span class="status ok">✔ WIN</span>' : '<span class="status no">✘ LOSS</span>')
-      : m.result === 'NR' ? '<span class="status mut">No result</span>' : '<span class="status mut">⏳ Pending</span>';
-    h += `<tr class="mrow">
+      : m.result === 'NR' ? '<span class="status mut">🚫 Abandoned</span>' : '<span class="status mut">⏳ Pending</span>';
+    h += `<tr class="mrow ${m.result === 'NR' ? 'abd' : ''}">
       <td class="mut idx">${idx + 1}</td>
       <td class="mut" data-label="#${idx + 1} · Date">${esc(m.date || '')}</td>
       <td class="match wide nolabel"><span><b>${esc(m.t1)}</b> <span class="mut">vs</span> <b>${esc(m.t2)}</b></span>${m.note ? `<div class="mut small">${esc(m.note)}</div>` : ''}</td>
@@ -642,10 +645,10 @@ function renderTable() {
         <option value="" ${m.result === null ? 'selected' : ''}>— Winner select karo —</option>
         <option value="0" ${m.result === 0 ? 'selected' : ''}>${esc(m.t1)}</option>
         <option value="1" ${m.result === 1 ? 'selected' : ''}>${esc(m.t2)}</option>
-        <option value="NR" ${m.result === 'NR' ? 'selected' : ''}>No result / Abandoned</option>
+        <option value="NR" ${m.result === 'NR' ? 'selected' : ''}>🚫 Abandoned / No result</option>
       </select></td>
       <td data-label="Status">${mark}</td>
-      <td class="acts wide nolabel"><button class="link" data-act="det" data-id="${esc(m.id)}">Why?</button><button class="link" data-act="edit" data-id="${esc(m.id)}">Edit</button><button class="link" data-act="del" data-id="${esc(m.id)}">🗑</button></td>
+      <td class="acts wide nolabel">${m.result === null ? `<button class="link abdbtn" data-act="abd" data-id="${esc(m.id)}" title="Match abandoned / no result mark karo">🚫 Abandoned</button>` : ''}<button class="link" data-act="det" data-id="${esc(m.id)}">Why?</button><button class="link" data-act="edit" data-id="${esc(m.id)}">Edit</button><button class="link" data-act="del" data-id="${esc(m.id)}">🗑</button></td>
     </tr>
     <tr class="det" data-det="${esc(m.id)}" ${openDetails.has(m.id) ? '' : 'hidden'}><td colspan="${9 + N.length}">${detailsHtml(pred, m)}</td></tr>`;
   }
@@ -793,6 +796,9 @@ $('#tbl').addEventListener('click', e => {
   if (b.dataset.act === 'det') {
     openDetails.has(id) ? openDetails.delete(id) : openDetails.add(id);
     document.querySelector(`tr[data-det="${CSS.escape(id)}"]`).hidden = !openDetails.has(id);
+  } else if (b.dataset.act === 'abd') {
+    if (confirm('Ye match ABANDONED mark karna hai? Ye settle ho jayega aur accuracy / learning me count nahi hoga.\n(Galti hui to Final Winner dropdown se badal sakte ho.)'))
+      write(updateDoc(matchDoc(id), { result: 'NR' }));
   } else if (b.dataset.act === 'edit') editMatch(id);
   else if (b.dataset.act === 'del' && confirm('Ye match delete karna hai?')) {
     openDetails.delete(id);
@@ -833,7 +839,7 @@ $('#btnCsv').addEventListener('click', () => {
     const tn = [m.t1, m.t2], done = E.isDone(m);
     lines.push([i + 1, m.date, m.t1, m.t2, m.note || '', ...m.preds.map(p => (p === null ? 'PAID' : tn[p])), E.splitOf(m.preds).key,
       tn[pred.pick], (pred.conf * 100).toFixed(1) + '%', pred.verdict,
-      done ? tn[m.result] : m.result === 'NR' ? 'No result' : '', done ? (pred.pick === m.result ? 'YES' : 'NO') : ''].map(q).join(','));
+      done ? tn[m.result] : m.result === 'NR' ? 'Abandoned' : '', done ? (pred.pick === m.result ? 'YES' : 'NO') : ''].map(q).join(','));
   });
   download(`cricket-predictor-${today()}.csv`, '﻿' + lines.join('\r\n'), 'text/csv');
 });
