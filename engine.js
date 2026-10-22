@@ -195,7 +195,6 @@
   function insights(S, m, names, pick) {
     const P = m.preds, out = [], tn = [m.t1, m.t2];
     const recOf = r => (r && r.n ? `${r.c}/${r.n} sahi (${pc(r.c / r.n)})` : 'abhi tak koi record nahi');
-    if (S.n < 8) out.push(`Abhi sirf ${S.n} completed match ka data hai — system seekh raha hai, prediction kam reliable.`);
 
     const sp = splitOf(P);
     const paidNames = names.filter((_, i) => !isOpen(P[i]));

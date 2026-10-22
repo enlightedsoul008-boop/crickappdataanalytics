@@ -201,7 +201,7 @@
 <div class="lock">
   <div class="lockbox">
     <div class="logo">🏏</div>
-    <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v6</span></h1>
+    <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v8</span></h1>
     <div class="mut small" id="lockSub">Connecting…</div>
     <form id="loginForm" autocomplete="on" hidden>
       <div class="field"><label for="email">Email</label><input id="email" type="email" autocomplete="username" placeholder="you@gmail.com" required></div>
@@ -224,7 +224,7 @@
     <div class="brand">
       <div class="logo">🏏</div>
       <div>
-        <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v6</span></h1>
+        <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v8</span></h1>
         <div class="small"><span class="sync" id="sync">Connecting</span> <span class="mut sub" id="who"></span></div>
       </div>
     </div>
@@ -263,7 +263,7 @@
   </section>
 
   <section class="card">
-    <h2><span class="ic">📋</span>Matches <span class="mut small" style="font-weight:400">— "System Pick" har match ka result aane se PEHLE ka prediction hai</span></h2>
+    <h2><span class="ic">📋</span>Matches</h2>
     <div class="tw"><table id="tbl"></table></div>
   </section>
 
@@ -272,9 +272,9 @@
     <div class="card"><h2><span class="ic">👤</span>Expert Report</h2><div class="tw" id="expertTbl"></div></div>
     <div class="card"><h2><span class="ic">📈</span>Accuracy Over Time</h2><div id="chart"></div></div>
     <div class="card"><h2><span class="ic">⚖️</span>Majority vs Minority</h2><div class="tw" id="splitTbl"></div></div>
-    <div class="card"><h2><span class="ic">🧩</span>Pattern Memory <span class="mut small" style="font-weight:400">— kaun kiske saath / opposite</span></h2><div class="tw" id="patTbl"></div></div>
+    <div class="card"><h2><span class="ic">🧩</span>Pattern Memory</h2><div class="tw" id="patTbl"></div></div>
     <div class="card"><h2><span class="ic">🎯</span>Confidence vs Actual Accuracy</h2><div class="tw" id="bucketTbl"></div></div>
-    <div class="card"><h2><span class="ic">🧠</span>Internal Models <span class="mut small" style="font-weight:400">— auto-weighted</span></h2><div class="tw" id="modelTbl"></div></div>
+    <div class="card"><h2><span class="ic">🧠</span>Internal Models</h2><div class="tw" id="modelTbl"></div></div>
   </section>
 </main>
 
@@ -519,14 +519,14 @@ function renderPickers() {
       <div class="phead">
         <div class="avatar" data-av="${i}">${esc(initial(e || DEFAULT_NAMES[i]))}</div>
         <div class="pname">
-          <input data-name="${i}" value="${esc(e)}" placeholder="Expert ka naam likho" maxlength="30" title="Naam badalne ke liye click karo">
-          <div class="mut small">Expert ${i + 1} · ✎ naam edit karo</div>
+          <input data-name="${i}" value="${esc(e)}" placeholder="Expert ka naam likho" maxlength="30">
+          <div class="mut small">Expert ${i + 1}</div>
         </div>
       </div>
       <div class="seg">
         <button data-i="${i}" data-v="0" class="${form.preds[i] === 0 ? 'on' : ''}" title="${esc(a)}">${esc(a)}</button>
         <button data-i="${i}" data-v="1" class="${form.preds[i] === 1 ? 'on' : ''}" title="${esc(b)}">${esc(b)}</button>
-        <button data-i="${i}" data-v="P" class="paidbtn ${form.preds[i] === 'P' ? 'on' : ''}" title="Prediction paid hai / pata nahi">💰 Paid</button>
+        <button data-i="${i}" data-v="P" class="paidbtn ${form.preds[i] === 'P' ? 'on' : ''}">💰 Paid</button>
       </div>
     </div>`).join('');
   renderPreview();
@@ -547,13 +547,13 @@ function renderPreview() {
     box.className = 'reco';
     const left = form.preds.filter(p => p === null).length;
     box.innerHTML = `<div class="lbl">System Recommendation</div>
-      <div class="mut" style="margin-top:6px">${!t1 || !t2 ? 'Dono teams ke naam daalo' : `Abhi ${left} expert ki prediction baaki hai (team ya 💰 Paid select karo)`} — fir yaha system batayega kiske saath jana hai.</div>`;
+      <div class="mut" style="margin-top:6px">${!t1 || !t2 ? 'Dono teams ke naam daalo' : `${left} expert baaki`}</div>`;
     return;
   }
   if (form.preds.every(p => p === 'P')) {
     box.className = 'reco';
     box.innerHTML = `<div class="lbl">System Recommendation</div>
-      <div class="no" style="margin-top:6px">Charo predictions paid hain — kam se kam 1 expert ki prediction open honi chahiye.</div>`;
+      <div class="no" style="margin-top:6px">Kam se kam 1 prediction open chahiye</div>`;
     return;
   }
   const m = { t1, t2, preds: toEngine(form.preds) };
@@ -640,9 +640,9 @@ function renderKpis() {
   const k = (c, ic, l, v, s) => `<div class="kpi" style="--c:${c}"><div class="l">${ic} ${l}</div><div class="v">${v}</div><div class="s">${s}</div></div>`;
   $('#kpis').innerHTML =
     k('var(--mut)', '🗂️', 'Completed Matches', EV.n, `${pendingN} pending${abdN ? ` · ${abdN} abandoned` : ''}`) +
-    k('var(--acc)', '🤖', 'System Accuracy', pct(EV.sys / EV.n), EV.n ? `${EV.sys}/${EV.n} sahi` : 'result daalo') +
-    k('var(--warn)', '👥', 'Majority Accuracy', pct(EV.majC / EV.decisive), EV.decisive ? `System same matches pe ${pct(EV.sysOnDecisive / EV.decisive)} <b class="${gain >= 0 ? 'ok' : 'no'}">(${gain >= 0 ? '+' : ''}${(gain * 100).toFixed(1)})</b>` : '2-2 splits excluded') +
-    k(best >= 0 ? `var(--e${best})` : 'var(--mut)', '🏆', 'Best Expert', best >= 0 ? esc(N[best]) : '—', best >= 0 ? `${pct(S.ex[best].c / S.ex[best].n)} (${S.ex[best].c}/${S.ex[best].n})` : 'abhi data nahi') +
+    k('var(--acc)', '🤖', 'System Accuracy', pct(EV.sys / EV.n), EV.n ? `${EV.sys}/${EV.n} sahi` : '—') +
+    k('var(--warn)', '👥', 'Majority Accuracy', pct(EV.majC / EV.decisive), EV.decisive ? `System same matches pe ${pct(EV.sysOnDecisive / EV.decisive)} <b class="${gain >= 0 ? 'ok' : 'no'}">(${gain >= 0 ? '+' : ''}${(gain * 100).toFixed(1)})</b>` : '—') +
+    k(best >= 0 ? `var(--e${best})` : 'var(--mut)', '🏆', 'Best Expert', best >= 0 ? esc(N[best]) : '—', best >= 0 ? `${pct(S.ex[best].c / S.ex[best].n)} (${S.ex[best].c}/${S.ex[best].n})` : '—') +
     k('var(--good)', '🎯', 'High-Confidence Accuracy', pct(hiC / hiN), `STRONG + GOOD picks: ${hiC}/${hiN}`);
 }
 
@@ -655,7 +655,7 @@ function renderTable() {
     return;
   }
   if (!R.rows.length) {
-    $('#tbl').innerHTML = '<tr><td class="empty"><div class="e">🏏</div>Abhi koi match nahi — upar se pehla match add karo.</td></tr>';
+    $('#tbl').innerHTML = '<tr><td class="empty"><div class="e">🏏</div>Abhi koi match nahi</td></tr>';
     return;
   }
   let h = `<thead><tr><th>#</th><th>Date</th><th>Match</th>${N.map((n, i) => `<th style="${ec(i)}"><span class="dot"></span>${esc(n)}</th>`).join('')}
@@ -680,7 +680,7 @@ function renderTable() {
         <option value="NR" ${m.result === 'NR' ? 'selected' : ''}>🚫 Abandoned / No result</option>
       </select></td>
       <td data-label="Status">${mark}</td>
-      <td class="acts wide nolabel">${m.result === null ? `<button class="link abdbtn" data-act="abd" data-id="${esc(m.id)}" title="Match abandoned / no result mark karo">🚫 Abandoned</button>` : ''}<button class="link" data-act="det" data-id="${esc(m.id)}">Why?</button><button class="link" data-act="edit" data-id="${esc(m.id)}">Edit</button><button class="link" data-act="del" data-id="${esc(m.id)}">🗑</button></td>
+      <td class="acts wide nolabel">${m.result === null ? `<button class="link abdbtn" data-act="abd" data-id="${esc(m.id)}">🚫 Abandoned</button>` : ''}<button class="link" data-act="det" data-id="${esc(m.id)}">Why?</button><button class="link" data-act="edit" data-id="${esc(m.id)}">Edit</button><button class="link" data-act="del" data-id="${esc(m.id)}">🗑</button></td>
     </tr>
     <tr class="det" data-det="${esc(m.id)}" ${openDetails.has(m.id) ? '' : 'hidden'}><td colspan="${9 + N.length}">${detailsHtml(pred, m)}</td></tr>`;
   }
@@ -694,8 +694,7 @@ function detailsHtml(pred, m) {
     return `<tr><td>${md.name}</td><td>${esc(tn[pk])} ${pct(Math.max(p, 1 - p))}</td>
       <td><div class="bar"><i style="width:${(pred.w[md.id] * 100).toFixed(1)}%"></i></div></td><td>${pct(pred.w[md.id])}</td></tr>`;
   }).join('');
-  return `<div class="small mut">Ye prediction ${pred.n} completed matches ke data pe based thi.</div>
-    <ul class="ins">${pred.insights.map(x => `<li>${esc(x)}</li>`).join('')}</ul>
+  return `<ul class="ins">${pred.insights.map(x => `<li>${esc(x)}</li>`).join('')}</ul>
     <table style="margin-top:8px;max-width:640px"><thead><tr><th>Model</th><th>Says</th><th>Weight</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
@@ -711,7 +710,7 @@ function renderExperts() {
   });
   h += '</tbody></table>';
 
-  h += '<h2 style="margin-top:20px;font-size:14px">Head-to-Head <span class="mut small" style="font-weight:400">— jab dono opposite the, row wala kitni baar sahi</span></h2><table><thead><tr><th></th>' +
+  h += '<h2 style="margin-top:20px;font-size:14px">Head-to-Head</h2><table><thead><tr><th></th>' +
     N.map(x => `<th>vs ${esc(x)}</th>`).join('') + '</tr></thead><tbody>';
   for (let i = 0; i < 4; i++) {
     h += `<tr><td style="${ec(i)}"><span class="dot"></span><b>${esc(N[i])}</b></td>`;
@@ -738,7 +737,7 @@ function renderSplit() {
 
 function renderPatterns() {
   const entries = Object.entries(R.S.pattern).sort((a, b) => b[1].n - a[1].n);
-  if (!entries.length) { $('#patTbl').innerHTML = '<div class="empty">Result aane ke baad patterns yaha dikhenge.</div>'; return; }
+  if (!entries.length) { $('#patTbl').innerHTML = '<div class="empty">Abhi data nahi</div>'; return; }
   const rows = entries.map(([key, v]) => {
     const lbl = E.patternLabel(key, names());
     const { a, b } = E.patternSides(key, names());
@@ -754,23 +753,21 @@ function renderPatterns() {
 function renderBuckets() {
   const desc = { STRONG: '72%+', GOOD: '62–72%', LEAN: '55–62%', RISKY: '< 55%' };
   const rows = EV.buckets.map(b => `<tr><td><span class="pill ${b.lab}">${b.lab}</span></td><td>${desc[b.lab]}</td><td>${b.n}</td><td>${frac(b.c, b.n)}</td></tr>`).join('');
-  $('#bucketTbl').innerHTML = `<table><thead><tr><th>Level</th><th>System confidence</th><th>Picks</th><th>Actual accuracy</th></tr></thead><tbody>${rows}</tbody></table>
-    <p class="small mut">Agar STRONG/GOOD ki actual accuracy baaki se zyada hai, to system ka confidence bharose layak hai — RISKY matches skip karna better ho sakta hai.</p>`;
+  $('#bucketTbl').innerHTML = `<table><thead><tr><th>Level</th><th>System confidence</th><th>Picks</th><th>Actual accuracy</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 function renderModels() {
   const rows = E.MODELS.map(md => {
     const mc = EV.models[md.id];
-    return `<tr><td><b>${md.name}</b><div class="mut small">${md.desc}</div></td><td>${frac(mc.c, mc.n)}</td>
+    return `<tr><td><b>${md.name}</b></td><td>${frac(mc.c, mc.n)}</td>
       <td><div class="bar"><i style="width:${(R.w[md.id] * 100).toFixed(1)}%"></i></div></td><td>${pct(R.w[md.id])}</td></tr>`;
   }).join('');
-  $('#modelTbl').innerHTML = `<table><thead><tr><th>Model</th><th>Accuracy</th><th>Current weight</th><th></th></tr></thead><tbody>${rows}</tbody></table>
-    <p class="small mut">Jo model zyada sahi nikalta hai uska weight apne aap badhta hai. Final prediction = sab models ka weighted mix.</p>`;
+  $('#modelTbl').innerHTML = `<table><thead><tr><th>Model</th><th>Accuracy</th><th>Current weight</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 function renderChart() {
   const s = EV.series;
-  if (s.length < 2) { $('#chart').innerHTML = '<div class="empty">Chart ke liye kam se kam 2 completed matches chahiye.</div>'; return; }
+  if (s.length < 2) { $('#chart').innerHTML = '<div class="empty">Abhi data nahi</div>'; return; }
   const W = 600, H = 230, pl = 38, pr = 10, pt = 10, pb = 22, n = s.length;
   const x = i => pl + (W - pl - pr) * i / (n - 1);
   const y = v => pt + (H - pt - pb) * (1 - v);
@@ -786,7 +783,7 @@ function renderChart() {
     <path d="${path('m')}" fill="none" stroke="var(--warn)" stroke-width="2"/>
     <path d="${path('s')}" fill="none" stroke="var(--acc)" stroke-width="2.5"/></svg>
     <div class="legend"><span><i style="background:var(--acc)"></i>System (${pct(s[n - 1].s)})</span>
-    <span><i style="background:var(--warn)"></i>Simple majority, 2-2 = 50% (${pct(s[n - 1].m)})</span></div>`;
+    <span><i style="background:var(--warn)"></i>Simple Majority (${pct(s[n - 1].m)})</span></div>`;
 }
 
 /* ---------- events ---------- */
