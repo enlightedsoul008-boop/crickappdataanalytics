@@ -1,0 +1,828 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cricket Expert Predictor</title>
+<style>
+  :root {
+    --bg: #0b0f17; --panel: #131925; --panel2: #1a2232; --panel3: #222c40; --line: #263048;
+    --text: #e9edf5; --mut: #8a94aa; --acc: #4f8cff; --acc2: #7b5cff;
+    --good: #2fbf71; --bad: #ef5350; --warn: #f5a524;
+    --e0: #4f8cff; --e1: #b26bff; --e2: #22c3a6; --e3: #ff8a4c;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; color: var(--text); font: 14px/1.5 "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+    background: radial-gradient(1200px 600px at 10% -10%, rgba(79,140,255,.12), transparent 60%),
+                radial-gradient(900px 500px at 100% 0%, rgba(123,92,255,.10), transparent 60%), var(--bg);
+    background-attachment: fixed; min-height: 100vh;
+  }
+  .mut { color: var(--mut); } .small { font-size: 12px; }
+
+  /* header */
+  header {
+    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(12px);
+    background: rgba(11,15,23,.78); border-bottom: 1px solid var(--line);
+  }
+  .hwrap { max-width: 1320px; margin: 0 auto; padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .logo { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; font-size: 22px;
+          background: linear-gradient(135deg, var(--acc), var(--acc2)); box-shadow: 0 6px 20px rgba(79,140,255,.35); }
+  h1 { font-size: 18px; margin: 0; letter-spacing: .2px; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .sync { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 999px; background: var(--panel2); border: 1px solid var(--line); color: var(--mut); }
+  .sync::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .sync.ok { color: var(--good); } .sync.busy { color: var(--warn); } .sync.err { color: var(--bad); }
+
+  main { max-width: 1320px; margin: 0 auto; padding: 18px 16px 40px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; margin-bottom: 18px; min-width: 0;
+          box-shadow: 0 10px 30px rgba(0,0,0,.25); }
+  .card h2 { font-size: 15px; margin: 0 0 14px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .card h2 .ic { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; background: var(--panel3); font-size: 15px; }
+  .sec-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--mut); margin: 6px 2px 12px; }
+
+  /* controls */
+  label { font-size: 12px; color: var(--mut); font-weight: 600; }
+  input, select { background: var(--panel2); border: 1px solid var(--line); color: var(--text); border-radius: 10px; padding: 10px 12px; font: inherit; width: 100%; }
+  input:focus, select:focus { outline: none; border-color: var(--acc); box-shadow: 0 0 0 3px rgba(79,140,255,.2); }
+  select { cursor: pointer; }
+  button { background: var(--panel2); border: 1px solid var(--line); color: var(--text); border-radius: 10px; padding: 9px 14px; font: inherit; cursor: pointer; transition: .15s; }
+  button:hover { border-color: var(--acc); background: var(--panel3); }
+  button:disabled { opacity: .6; cursor: wait; }
+  button.primary { background: linear-gradient(135deg, var(--acc), var(--acc2)); border: none; color: #fff; font-weight: 700; padding: 11px 22px; box-shadow: 0 6px 18px rgba(79,140,255,.3); }
+  button.primary:hover { filter: brightness(1.1); }
+  button.danger { color: var(--bad); }
+  button.ghost { background: transparent; }
+  button.link { background: none; border: none; padding: 4px 8px; color: var(--mut); border-radius: 6px; }
+  button.link:hover { color: var(--text); background: var(--panel3); }
+
+  /* KPIs */
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin-bottom: 18px; }
+  .kpi { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; position: relative; overflow: hidden; }
+  .kpi::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 3px; background: var(--c, var(--acc)); }
+  .kpi .l { color: var(--mut); font-size: 12px; font-weight: 600; display: flex; gap: 6px; align-items: center; }
+  .kpi .v { font-size: 28px; font-weight: 800; margin: 4px 0 2px; font-variant-numeric: tabular-nums; }
+  .kpi .s { color: var(--mut); font-size: 12px; }
+
+  /* match form */
+  .teams { display: grid; grid-template-columns: 1fr auto 1fr; gap: 12px; align-items: end; }
+  .vs { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-size: 13px;
+        background: var(--panel3); border: 1px solid var(--line); color: var(--mut); }
+  .teams input { font-size: 16px; font-weight: 600; padding: 12px 14px; }
+  .meta { display: grid; grid-template-columns: 200px 1fr; gap: 12px; margin-top: 12px; }
+  .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+
+  .pickers { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin: 18px 0; }
+  .picker { background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: 14px; border-top: 3px solid var(--ec); }
+  .phead { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .avatar { width: 38px; height: 38px; flex: none; border-radius: 50%; display: grid; place-items: center; font-weight: 800; color: #fff; background: var(--ec); font-size: 16px; }
+  .pname { flex: 1; min-width: 0; }
+  .pname input { background: transparent; border: 1px dashed transparent; padding: 4px 6px; font-weight: 700; font-size: 15px; border-radius: 6px; }
+  .pname input:hover { border-color: var(--line); }
+  .pname input:focus { border: 1px solid var(--ec); box-shadow: none; background: var(--panel); }
+  .pname .small { padding-left: 7px; }
+  .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .seg button { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 10px 8px; font-weight: 600; }
+  .seg button.on { background: var(--ec); border-color: var(--ec); color: #fff; box-shadow: 0 4px 14px rgba(0,0,0,.3); }
+
+  .reco { border-radius: 12px; padding: 16px; margin-bottom: 16px; background: var(--panel2); border: 1px dashed var(--line); }
+  .reco.live { border: 1px solid rgba(79,140,255,.45); background: linear-gradient(135deg, rgba(79,140,255,.14), rgba(123,92,255,.10)); }
+  .reco .lbl { font-size: 12px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--mut); }
+  .reco .big { font-size: 26px; font-weight: 800; margin: 4px 0 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+  .meter { height: 8px; border-radius: 4px; background: var(--panel3); overflow: hidden; max-width: 420px; margin-bottom: 6px; }
+  .meter i { display: block; height: 100%; background: linear-gradient(90deg, var(--acc), var(--acc2)); }
+  ul.ins { margin: 10px 0 0; padding-left: 18px; } ul.ins li { margin: 3px 0; }
+
+  /* table */
+  .tw { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; vertical-align: middle; }
+  th { color: var(--mut); font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: .6px; background: var(--panel); }
+  tbody tr:hover > td { background: rgba(255,255,255,.02); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--ec); }
+  .chip { display: inline-block; padding: 3px 10px; border-radius: 999px; background: var(--panel3); font-size: 12px; font-weight: 600; }
+  .chip.ok { background: rgba(47,191,113,.16); color: #6fe0a3; }
+  .chip.no { background: rgba(239,83,80,.16); color: #ff8f8c; }
+  tr.det > td { white-space: normal; background: var(--panel2) !important; }
+  .ok { color: var(--good); } .no { color: var(--bad); }
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 800; letter-spacing: .4px; }
+  .STRONG { background: rgba(47,191,113,.16); color: var(--good); }
+  .GOOD { background: rgba(79,140,255,.16); color: var(--acc); }
+  .LEAN { background: rgba(245,165,36,.16); color: var(--warn); }
+  .RISKY { background: rgba(239,83,80,.16); color: var(--bad); }
+  .status { font-weight: 700; font-size: 12px; }
+  .bar { height: 6px; background: var(--panel3); border-radius: 3px; min-width: 80px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; background: linear-gradient(90deg, var(--acc), var(--acc2)); border-radius: 3px; }
+  .empty { text-align: center; padding: 30px 10px; color: var(--mut); }
+  .empty .e { font-size: 34px; }
+
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(480px, 100%), 1fr)); gap: 18px; }
+  .grid2 .card { margin-bottom: 0; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--mut); margin-top: 6px; }
+  .legend i { display: inline-block; width: 12px; height: 3px; vertical-align: middle; margin-right: 4px; }
+
+  /* login screen */
+  .lock { display: none; min-height: 100vh; place-items: center; padding: 20px; }
+  body.locked .lock { display: grid; }
+  body.locked header, body.locked main { display: none; }
+  .lockbox { width: 100%; max-width: 400px; background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 28px 24px; text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,.45); }
+  .lockbox .logo { width: 60px; height: 60px; font-size: 30px; margin: 0 auto 14px; border-radius: 16px; }
+  .lockbox h1 { font-size: 20px; margin-bottom: 4px; }
+  .lockbox form { display: flex; flex-direction: column; gap: 12px; margin-top: 20px; text-align: left; }
+  .lockbox form[hidden] { display: none; }
+  .pwrap { position: relative; }
+  .pwrap input { padding-right: 64px; }
+  .lockbox input { font-size: 16px; }
+  .pwrap button { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); padding: 5px 10px; font-size: 12px; }
+  .remember { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--mut); font-weight: 500; cursor: pointer; }
+  .remember input { width: auto; accent-color: var(--acc); }
+  .lerr { color: var(--bad); font-size: 13px; min-height: 18px; text-align: center; }
+  .lockbox .primary { width: 100%; }
+  .notice { text-align: left; margin-top: 18px; padding: 14px; border-radius: 12px; background: var(--panel2); border: 1px solid var(--line); font-size: 13px; }
+  .notice ol { margin: 8px 0 0; padding-left: 18px; } .notice li { margin: 3px 0; }
+  .notice code { background: var(--panel3); padding: 1px 6px; border-radius: 5px; }
+
+  /* tablet */
+  @media (max-width: 900px) {
+    .hwrap { gap: 10px; }
+    .actions button { padding: 7px 10px; font-size: 13px; }
+  }
+
+  /* phone: matches table turns into cards */
+  @media (max-width: 760px) {
+    main { padding: 12px 10px 30px; }
+    .card { padding: 14px; border-radius: 12px; }
+    .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .kpi { padding: 12px; }
+    .kpi .v { font-size: 22px; }
+    .kpi:last-child:nth-child(odd) { grid-column: span 2; }
+    .meta { grid-template-columns: 1fr; }
+    .teams { grid-template-columns: 1fr; gap: 8px; }
+    .vs { margin: 0 auto; width: 36px; height: 36px; font-size: 11px; }
+    .pickers { grid-template-columns: 1fr; }
+    .reco .big { font-size: 21px; }
+    #btnAdd { width: 100%; }
+    .hwrap { padding: 10px 12px; }
+    .brand .sub { display: none; }
+    .logo { width: 36px; height: 36px; font-size: 18px; }
+    h1 { font-size: 16px; }
+    .actions { width: 100%; display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+    .actions button { padding: 7px 4px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    header { position: static; }
+
+    #tbl, #tbl tbody { display: block; }
+    #tbl thead { display: none; }
+    #tbl tr.mrow { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 10px; }
+    #tbl tr.mrow > td { border: none; padding: 0; white-space: normal; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    #tbl tr.mrow > td::before { content: attr(data-label); font-size: 10px; text-transform: uppercase; letter-spacing: .6px; color: var(--mut); font-weight: 700; }
+    #tbl tr.mrow > td.wide { grid-column: span 2; }
+    #tbl tr.mrow > td.nolabel::before { display: none; }
+    #tbl tr.mrow > td.match { font-size: 15px; order: -2; }
+    #tbl tr.mrow > td.idx { display: none; }
+    #tbl tr.mrow > td.acts { flex-direction: row; justify-content: flex-end; }
+    #tbl tr.mrow > td select { width: 100%; min-width: 0 !important; }
+    #tbl tr.det { display: block; margin: -6px 0 10px; }
+    #tbl tr.det[hidden] { display: none; }
+    #tbl tr.det > td { display: block; border-radius: 12px; border: 1px solid var(--line); }
+    #tbl tr.det table { display: block; overflow-x: auto; }
+    tbody tr:hover > td { background: none; }
+  }
+</style>
+</head>
+<body class="locked">
+<div class="lock">
+  <div class="lockbox">
+    <div class="logo">🏏</div>
+    <h1>Cricket Expert Predictor</h1>
+    <div class="mut small" id="lockSub">Connecting…</div>
+    <form id="loginForm" autocomplete="on" hidden>
+      <div class="field"><label for="email">Email</label><input id="email" type="email" autocomplete="username" placeholder="you@gmail.com" required></div>
+      <div class="field"><label for="pw">Password</label>
+        <div class="pwrap">
+          <input id="pw" type="password" autocomplete="current-password" placeholder="Password" required>
+          <button type="button" class="ghost" id="pwShow">Show</button>
+        </div>
+      </div>
+      <label class="remember"><input type="checkbox" id="pwRemember" checked> Is device pe logged-in raho</label>
+      <button class="primary" id="pwBtn" type="submit">🔓 Login</button>
+      <div class="lerr" id="pwErr"></div>
+    </form>
+    <div class="notice" id="notice" hidden></div>
+  </div>
+</div>
+
+<header>
+  <div class="hwrap">
+    <div class="brand">
+      <div class="logo">🏏</div>
+      <div>
+        <h1>Cricket Expert Predictor</h1>
+        <div class="small"><span class="sync" id="sync">Connecting</span> <span class="mut sub" id="who"></span></div>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="ghost" id="btnExport">⬇ Backup</button>
+      <button class="ghost" id="btnImport">⬆ Restore</button>
+      <input type="file" id="fileImport" accept=".json,application/json" hidden>
+      <button class="ghost" id="btnCsv">📄 Excel / CSV</button>
+      <button class="ghost danger" id="btnReset">Reset</button>
+      <button class="ghost" id="btnLogout" title="Logout">🔒 Logout</button>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section class="kpis" id="kpis"></section>
+
+  <section class="card">
+    <h2><span class="ic">➕</span><span id="formTitle">New Match</span></h2>
+    <div class="teams">
+      <div class="field"><label for="t1">Team 1</label><input id="t1" list="teamList" placeholder="England" autocomplete="off"></div>
+      <div class="vs">VS</div>
+      <div class="field"><label for="t2">Team 2</label><input id="t2" list="teamList" placeholder="New Zealand" autocomplete="off"></div>
+    </div>
+    <div class="meta">
+      <div class="field"><label for="date">Date</label><input id="date" type="date"></div>
+      <div class="field"><label for="note">Note (optional)</label><input id="note" placeholder="T20 World Cup, Match 12"></div>
+    </div>
+    <datalist id="teamList"></datalist>
+    <div class="pickers" id="pickers"></div>
+    <div class="reco" id="preview"></div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <button id="btnAdd" class="primary">Add Match</button>
+      <button id="btnCancel" hidden>Cancel Edit</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2><span class="ic">📋</span>Matches <span class="mut small" style="font-weight:400">— "System Pick" har match ka result aane se PEHLE ka prediction hai</span></h2>
+    <div class="tw"><table id="tbl"></table></div>
+  </section>
+
+  <div class="sec-title">Analytics</div>
+  <section class="grid2">
+    <div class="card"><h2><span class="ic">👤</span>Expert Report</h2><div class="tw" id="expertTbl"></div></div>
+    <div class="card"><h2><span class="ic">📈</span>Accuracy Over Time</h2><div id="chart"></div></div>
+    <div class="card"><h2><span class="ic">⚖️</span>Majority vs Minority</h2><div class="tw" id="splitTbl"></div></div>
+    <div class="card"><h2><span class="ic">🧩</span>Pattern Memory <span class="mut small" style="font-weight:400">— kaun kiske saath / opposite</span></h2><div class="tw" id="patTbl"></div></div>
+    <div class="card"><h2><span class="ic">🎯</span>Confidence vs Actual Accuracy</h2><div class="tw" id="bucketTbl"></div></div>
+    <div class="card"><h2><span class="ic">🧠</span>Internal Models <span class="mut small" style="font-weight:400">— auto-weighted</span></h2><div class="tw" id="modelTbl"></div></div>
+  </section>
+</main>
+
+<script src="engine.js"></script>
+<script src="firebase-config.js"></script>
+<script>
+  // If the Firebase module never starts (no internet, or opened as a local file), say so instead of hanging.
+  setTimeout(() => {
+    if (window.__appStarted) return;
+    document.getElementById('lockSub').textContent = 'App load nahi hua';
+    const n = document.getElementById('notice');
+    n.hidden = false;
+    n.innerHTML = location.protocol === 'file:'
+      ? 'Ye app ab server (Firebase) se chalta hai, isliye file ko double-click karke nahi khulega. GitHub Pages wale link se kholo.'
+      : 'Firebase load nahi ho paya — internet connection check karke page refresh karo.';
+  }, 8000);
+</script>
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, setPersistence,
+         browserLocalPersistence, browserSessionPersistence } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+import { getFirestore, collection, doc, onSnapshot, setDoc, updateDoc, deleteDoc, writeBatch } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+
+window.__appStarted = true;
+const E = window.Engine;
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const pct = x => (isFinite(x) ? (x * 100).toFixed(1) + '%' : '—');
+const frac = (c, n) => (n ? `${pct(c / n)} <span class="mut small">(${+c.toFixed(1)}/${n})</span>` : '<span class="mut">—</span>');
+const today = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
+const DEFAULT_NAMES = ['A', 'B', 'C', 'D'];
+const OLD_LOCAL_KEY = 'cricExpertPredictor.v1';
+const ec = i => `--ec:var(--e${i})`;
+const initial = s => (String(s).trim()[0] || '?').toUpperCase();
+
+let state = { experts: DEFAULT_NAMES.slice(), matches: [] };
+let R, EV;
+let form = { preds: [null, null, null, null], editId: null };
+const openDetails = new Set();
+const names = () => state.experts.map((n, i) => String(n || '').trim() || DEFAULT_NAMES[i]);
+
+/* ---------- Firebase ---------- */
+const cfg = window.FIREBASE_CONFIG;
+if (!cfg || !cfg.apiKey || cfg.apiKey === 'PASTE_HERE') {
+  $('#lockSub').textContent = 'Setup baaki hai';
+  $('#notice').hidden = false;
+  $('#notice').innerHTML = `<b>Firebase config nahi mila.</b><ol>
+    <li><code>firebase-config.js</code> file kholo</li>
+    <li>Firebase console se apne project ka web config paste karo</li>
+    <li>File save karke GitHub pe upload karo, fir page refresh karo</li></ol>
+    <div class="mut small" style="margin-top:8px">Poore steps README.md me hain.</div>`;
+  throw new Error('Firebase config missing');
+}
+const app = initializeApp(cfg);
+const auth = getAuth(app);
+const db = getFirestore(app);
+let user = null, unsubs = [], gotExperts = false, gotMatches = false, booted = false, pending = 0;
+
+const userDoc = () => doc(db, 'users', user.uid);
+const matchDoc = id => doc(db, 'users', user.uid, 'matches', id);
+const matchesCol = () => collection(db, 'users', user.uid, 'matches');
+// Firestore rejects undefined, so always store a clean, fixed shape
+const clean = (m, seq) => ({
+  id: String(m.id), seq: seq !== undefined ? seq : (m.seq || Date.now()),
+  t1: String(m.t1), t2: String(m.t2), date: m.date || '', note: m.note || '',
+  preds: m.preds.map(Number), result: m.result === undefined ? null : m.result,
+});
+
+function setSync(kind, text) {
+  const el = $('#sync');
+  el.className = 'sync ' + kind;
+  el.textContent = text;
+}
+async function write(promise) {
+  pending++; setSync('busy', 'Saving…');
+  try {
+    await promise;
+    if (--pending === 0) setSync('ok', 'Saved on server');
+  } catch (e) {
+    pending--;
+    console.error(e);
+    setSync('err', 'Save failed');
+    alert('Server pe save nahi hua: ' + (e.code || e.message) + '\nInternet check karke dobara try karo.');
+  }
+}
+function onSyncError(e) {
+  console.error(e);
+  setSync('err', 'Server error');
+  if (e.code === 'permission-denied') alert('Server ne access deny kiya. Firestore Rules me apna email sahi daala hai? (README dekho)');
+}
+
+function startSync() {
+  gotExperts = gotMatches = false;
+  setSync('busy', 'Loading…');
+  unsubs.push(onSnapshot(userDoc(), snap => {
+    const ex = snap.exists() ? snap.data().experts : null;
+    if (Array.isArray(ex) && ex.length === 4) state.experts = ex.map(String);
+    gotExperts = true; dataChanged();
+  }, onSyncError));
+  unsubs.push(onSnapshot(matchesCol(), { includeMetadataChanges: true }, snap => {
+    state.matches = snap.docs.map(d => d.data()).sort((a, b) => (a.seq - b.seq) || (a.id < b.id ? -1 : 1));
+    gotMatches = true;
+    if (!pending) setSync(snap.metadata.fromCache ? 'busy' : 'ok', snap.metadata.fromCache ? 'Offline' : 'Synced');
+    dataChanged();
+  }, onSyncError));
+}
+function stopSync() {
+  unsubs.forEach(u => u()); unsubs = [];
+  state = { experts: DEFAULT_NAMES.slice(), matches: [] };
+  booted = false;
+}
+
+function dataChanged() {
+  if (!gotExperts || !gotMatches) return;
+  const typingName = document.activeElement && document.activeElement.matches('input[data-name]');
+  renderAll(booted && typingName);
+  if (!booted) { booted = true; offerLocalMigration(); }
+}
+
+// One-time move of data that older versions of this app kept in the browser.
+function offerLocalMigration() {
+  let old;
+  try { old = JSON.parse(localStorage.getItem(OLD_LOCAL_KEY)); } catch (e) { return; }
+  if (!old || !Array.isArray(old.matches) || !old.matches.length) return;
+  if (state.matches.length) {
+    if (confirm(`Browser me purane ${old.matches.length} matches pade hain, lekin server pe already data hai. Browser wala purana data hata dein?`))
+      localStorage.removeItem(OLD_LOCAL_KEY);
+    return;
+  }
+  if (!confirm(`Is browser me pehle ke ${old.matches.length} matches mile. Inhe server pe upload kar dein?`)) return;
+  replaceAll(old.experts || state.experts, old.matches).then(() => {
+    try { localStorage.removeItem(OLD_LOCAL_KEY); localStorage.removeItem('cricExpertPredictor.auth'); } catch (e) {}
+  });
+}
+
+// Overwrites everything on the server with the given experts + matches (used by Restore & migration).
+async function replaceAll(experts, matches) {
+  const keep = new Set(matches.map(m => String(m.id)));
+  const ops = state.matches.filter(m => !keep.has(m.id)).map(m => b => b.delete(matchDoc(m.id)));
+  matches.forEach((m, i) => ops.push(b => b.set(matchDoc(String(m.id)), clean(m, i + 1))));
+  ops.push(b => b.set(userDoc(), { experts: experts.map(String) }, { merge: true }));
+  const run = async () => {
+    for (let i = 0; i < ops.length; i += 400) {
+      const batch = writeBatch(db);
+      ops.slice(i, i + 400).forEach(f => f(batch));
+      await batch.commit();
+    }
+  };
+  await write(run());
+}
+
+/* ---------- login ---------- */
+const AUTH_ERRORS = {
+  'auth/invalid-credential': 'Galat email ya password.',
+  'auth/wrong-password': 'Galat email ya password.',
+  'auth/user-not-found': 'Galat email ya password.',
+  'auth/invalid-email': 'Email sahi format me daalo.',
+  'auth/too-many-requests': 'Bahut zyada galat attempts. Thodi der baad try karo.',
+  'auth/network-request-failed': 'Internet connection check karo.',
+  'auth/user-disabled': 'Ye account disable hai.',
+};
+$('#pwShow').addEventListener('click', () => {
+  const p = $('#pw'); p.type = p.type === 'password' ? 'text' : 'password';
+  $('#pwShow').textContent = p.type === 'password' ? 'Show' : 'Hide';
+});
+$('#loginForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const btn = $('#pwBtn'), err = $('#pwErr');
+  btn.disabled = true; err.textContent = '';
+  try {
+    await setPersistence(auth, $('#pwRemember').checked ? browserLocalPersistence : browserSessionPersistence);
+    await signInWithEmailAndPassword(auth, $('#email').value.trim(), $('#pw').value);
+    $('#pw').value = '';
+  } catch (x) {
+    err.textContent = AUTH_ERRORS[x.code] || ('Login fail: ' + (x.code || x.message));
+  }
+  btn.disabled = false;
+});
+$('#btnLogout').addEventListener('click', () => {
+  if (pending && !confirm('Kuch data abhi save ho raha hai. Phir bhi logout karna hai?')) return;
+  signOut(auth);
+});
+
+onAuthStateChanged(auth, u => {
+  if (u) {
+    user = u;
+    $('#who').textContent = u.email || '';
+    document.body.classList.remove('locked');
+    $('#date').value = today();
+    renderAll();
+    startSync();
+  } else {
+    user = null;
+    stopSync();
+    document.body.classList.add('locked');
+    $('#lockSub').textContent = 'Login karo — data server pe safe hai';
+    $('#loginForm').hidden = false;
+    $('#email').focus();
+  }
+});
+
+/* ---------- form ---------- */
+function teamNames() { return [$('#t1').value.trim() || 'Team 1', $('#t2').value.trim() || 'Team 2']; }
+
+function renderPickers() {
+  const [a, b] = teamNames();
+  $('#pickers').innerHTML = state.experts.map((e, i) => `
+    <div class="picker" style="${ec(i)}">
+      <div class="phead">
+        <div class="avatar" data-av="${i}">${esc(initial(e || DEFAULT_NAMES[i]))}</div>
+        <div class="pname">
+          <input data-name="${i}" value="${esc(e)}" placeholder="Expert ka naam likho" maxlength="30" title="Naam badalne ke liye click karo">
+          <div class="mut small">Expert ${i + 1} · ✎ naam edit karo</div>
+        </div>
+      </div>
+      <div class="seg">
+        <button data-i="${i}" data-v="0" class="${form.preds[i] === 0 ? 'on' : ''}" title="${esc(a)}">${esc(a)}</button>
+        <button data-i="${i}" data-v="1" class="${form.preds[i] === 1 ? 'on' : ''}" title="${esc(b)}">${esc(b)}</button>
+      </div>
+    </div>`).join('');
+  renderPreview();
+}
+
+function updatePickerTeams() {
+  const [a, b] = teamNames();
+  document.querySelectorAll('#pickers button[data-v]').forEach(btn => {
+    btn.textContent = btn.title = btn.dataset.v === '0' ? a : b;
+  });
+  renderPreview();
+}
+
+function renderPreview() {
+  const box = $('#preview');
+  const t1 = $('#t1').value.trim(), t2 = $('#t2').value.trim();
+  if (!t1 || !t2 || form.preds.includes(null)) {
+    box.className = 'reco';
+    const left = form.preds.filter(p => p === null).length;
+    box.innerHTML = `<div class="lbl">System Recommendation</div>
+      <div class="mut" style="margin-top:6px">${!t1 || !t2 ? 'Dono teams ke naam daalo' : `Abhi ${left} expert ki prediction baaki hai`} — fir yaha system batayega kiske saath jana hai.</div>`;
+    return;
+  }
+  const m = { t1, t2, preds: form.preds.slice() };
+  const pr = E.predictWith(R, m, names());
+  const tn = [t1, t2];
+  box.className = 'reco live';
+  box.innerHTML = `
+    <div class="lbl">System Recommendation</div>
+    <div class="big">👉 ${esc(tn[pr.pick])} <span class="pill ${pr.verdict}">${pr.verdict}</span></div>
+    <div class="meter"><i style="width:${(pr.conf * 100).toFixed(1)}%"></i></div>
+    <div class="small"><b>${pct(pr.conf)}</b> confidence ${verdictNote(pr.verdict)}</div>
+    <ul class="ins">${pr.insights.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`;
+}
+
+function verdictNote(v) {
+  const b = EV.buckets.find(x => x.lab === v);
+  return b && b.n ? `<span class="mut">· past me "${v}" picks ${b.c}/${b.n} sahi rahe (${pct(b.c / b.n)})</span>` : '';
+}
+
+function resetForm() {
+  form = { preds: [null, null, null, null], editId: null };
+  $('#t1').value = ''; $('#t2').value = ''; $('#note').value = ''; $('#date').value = today();
+  $('#formTitle').textContent = 'New Match';
+  $('#btnAdd').textContent = 'Add Match';
+  $('#btnCancel').hidden = true;
+  renderPickers();
+}
+
+function submitForm() {
+  const t1 = $('#t1').value.trim(), t2 = $('#t2').value.trim();
+  if (!t1 || !t2) return alert('Dono team ka naam daalo.');
+  if (E.norm(t1) === E.norm(t2)) return alert('Dono team same nahi ho sakti.');
+  if (form.preds.includes(null)) return alert('Charo experts ki prediction select karo.');
+  const data = { t1, t2, date: $('#date').value || today(), note: $('#note').value.trim(), preds: form.preds.slice() };
+  const old = form.editId && state.matches.find(x => x.id === form.editId);
+  let m;
+  if (old) {
+    m = { ...old, ...data };
+    // result is stored as a team index, so re-map it by name in case teams were renamed/swapped
+    if (E.isDone(old)) {
+      const winner = E.norm(old.result === 0 ? old.t1 : old.t2);
+      m.result = winner === E.norm(t1) ? 0 : winner === E.norm(t2) ? 1 : null;
+    }
+  } else {
+    m = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), seq: Date.now(), result: null, ...data };
+  }
+  write(setDoc(matchDoc(m.id), clean(m)));
+  resetForm();
+}
+
+function editMatch(id) {
+  const m = state.matches.find(x => x.id === id);
+  if (!m) return;
+  form = { preds: m.preds.slice(), editId: id };
+  $('#t1').value = m.t1; $('#t2').value = m.t2; $('#date').value = m.date || ''; $('#note').value = m.note || '';
+  $('#formTitle').textContent = 'Edit Match';
+  $('#btnAdd').textContent = 'Save Changes';
+  $('#btnCancel').hidden = false;
+  renderPickers();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+/* ---------- render ---------- */
+// keepPickers: re-render everything except the expert cards (so typing a name doesn't lose focus)
+function renderAll(keepPickers) {
+  R = E.run(state.matches, names());
+  EV = E.evaluate(R.rows);
+  renderKpis(); renderTable();
+  if (keepPickers) renderPreview(); else renderPickers();
+  renderExperts(); renderSplit(); renderPatterns(); renderBuckets(); renderModels(); renderChart();
+  const teams = [...new Set(state.matches.flatMap(m => [m.t1, m.t2]))].sort();
+  $('#teamList').innerHTML = teams.map(t => `<option value="${esc(t)}">`).join('');
+}
+
+function renderKpis() {
+  const S = R.S, N = names(), pendingN = state.matches.filter(m => m.result === null).length;
+  let best = -1;
+  S.ex.forEach((e, i) => { if (e.n && (best < 0 || e.c / e.n > S.ex[best].c / S.ex[best].n)) best = i; });
+  const hi = EV.buckets.filter(b => b.lab === 'STRONG' || b.lab === 'GOOD');
+  const hiC = hi.reduce((a, b) => a + b.c, 0), hiN = hi.reduce((a, b) => a + b.n, 0);
+  const gain = EV.decisive ? (EV.sysOnDecisive - EV.majC) / EV.decisive : NaN;
+  const k = (c, ic, l, v, s) => `<div class="kpi" style="--c:${c}"><div class="l">${ic} ${l}</div><div class="v">${v}</div><div class="s">${s}</div></div>`;
+  $('#kpis').innerHTML =
+    k('var(--mut)', '🗂️', 'Completed Matches', EV.n, `${pendingN} pending`) +
+    k('var(--acc)', '🤖', 'System Accuracy', pct(EV.sys / EV.n), EV.n ? `${EV.sys}/${EV.n} sahi` : 'result daalo') +
+    k('var(--warn)', '👥', 'Majority Accuracy', pct(EV.majC / EV.decisive), EV.decisive ? `System same matches pe ${pct(EV.sysOnDecisive / EV.decisive)} <b class="${gain >= 0 ? 'ok' : 'no'}">(${gain >= 0 ? '+' : ''}${(gain * 100).toFixed(1)})</b>` : '2-2 splits excluded') +
+    k(best >= 0 ? `var(--e${best})` : 'var(--mut)', '🏆', 'Best Expert', best >= 0 ? esc(N[best]) : '—', best >= 0 ? `${pct(S.ex[best].c / S.ex[best].n)} (${S.ex[best].c}/${S.ex[best].n})` : 'abhi data nahi') +
+    k('var(--good)', '🎯', 'High-Confidence Accuracy', pct(hiC / hiN), `STRONG + GOOD picks: ${hiC}/${hiN}`);
+}
+
+function renderTable() {
+  const N = names();
+  if (!booted) {
+    $('#tbl').innerHTML = '<tr><td class="empty"><div class="e">☁️</div>Server se data load ho raha hai…</td></tr>';
+    return;
+  }
+  if (!R.rows.length) {
+    $('#tbl').innerHTML = '<tr><td class="empty"><div class="e">🏏</div>Abhi koi match nahi — upar se pehla match add karo.</td></tr>';
+    return;
+  }
+  let h = `<thead><tr><th>#</th><th>Date</th><th>Match</th>${N.map((n, i) => `<th style="${ec(i)}"><span class="dot"></span>${esc(n)}</th>`).join('')}
+    <th>Split</th><th>System Pick</th><th>Final Winner</th><th>Status</th><th></th></tr></thead><tbody>`;
+  for (let idx = R.rows.length - 1; idx >= 0; idx--) {
+    const { m, pred } = R.rows[idx], done = E.isDone(m), tn = [m.t1, m.t2];
+    const sp = E.splitOf(m.preds);
+    const mark = done ? (pred.pick === m.result ? '<span class="status ok">✔ WIN</span>' : '<span class="status no">✘ LOSS</span>')
+      : m.result === 'NR' ? '<span class="status mut">No result</span>' : '<span class="status mut">⏳ Pending</span>';
+    h += `<tr class="mrow">
+      <td class="mut idx">${idx + 1}</td>
+      <td class="mut" data-label="#${idx + 1} · Date">${esc(m.date || '')}</td>
+      <td class="match wide nolabel"><span><b>${esc(m.t1)}</b> <span class="mut">vs</span> <b>${esc(m.t2)}</b></span>${m.note ? `<div class="mut small">${esc(m.note)}</div>` : ''}</td>
+      ${m.preds.map((p, i) => `<td data-label="${esc(N[i])}"><span><span class="chip ${done ? (p === m.result ? 'ok' : 'no') : ''}">${esc(tn[p])}</span></span></td>`).join('')}
+      <td data-label="Split"><span><b>${sp.key}</b>${sp.majTeam !== null ? ` <span class="mut small">→ ${esc(tn[sp.majTeam])}</span>` : ''}</span></td>
+      <td data-label="System Pick" class="wide"><span><b>${esc(tn[pred.pick])}</b> <span class="mut small">${pct(pred.conf)}</span> <span class="pill ${pred.verdict}">${pred.verdict}</span></span></td>
+      <td data-label="Final Winner"><select data-res="${esc(m.id)}" style="min-width:150px">
+        <option value="" ${m.result === null ? 'selected' : ''}>— Winner select karo —</option>
+        <option value="0" ${m.result === 0 ? 'selected' : ''}>${esc(m.t1)}</option>
+        <option value="1" ${m.result === 1 ? 'selected' : ''}>${esc(m.t2)}</option>
+        <option value="NR" ${m.result === 'NR' ? 'selected' : ''}>No result / Abandoned</option>
+      </select></td>
+      <td data-label="Status">${mark}</td>
+      <td class="acts wide nolabel"><button class="link" data-act="det" data-id="${esc(m.id)}">Why?</button><button class="link" data-act="edit" data-id="${esc(m.id)}">Edit</button><button class="link" data-act="del" data-id="${esc(m.id)}">🗑</button></td>
+    </tr>
+    <tr class="det" data-det="${esc(m.id)}" ${openDetails.has(m.id) ? '' : 'hidden'}><td colspan="${9 + N.length}">${detailsHtml(pred, m)}</td></tr>`;
+  }
+  $('#tbl').innerHTML = h + '</tbody>';
+}
+
+function detailsHtml(pred, m) {
+  const tn = [m.t1, m.t2];
+  const rows = E.MODELS.map(md => {
+    const p = pred.probs[md.id], pk = p >= 0.5 ? 0 : 1;
+    return `<tr><td>${md.name}</td><td>${esc(tn[pk])} ${pct(Math.max(p, 1 - p))}</td>
+      <td><div class="bar"><i style="width:${(pred.w[md.id] * 100).toFixed(1)}%"></i></div></td><td>${pct(pred.w[md.id])}</td></tr>`;
+  }).join('');
+  return `<div class="small mut">Ye prediction ${pred.n} completed matches ke data pe based thi.</div>
+    <ul class="ins">${pred.insights.map(x => `<li>${esc(x)}</li>`).join('')}</ul>
+    <table style="margin-top:8px;max-width:640px"><thead><tr><th>Model</th><th>Says</th><th>Weight</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function renderExperts() {
+  const S = R.S, N = names();
+  const merge = (a, b) => ({ c: a.c + b.c, n: a.n + b.n });
+  let h = '<table><thead><tr><th>Expert</th><th>Overall</th><th>Last 10</th><th>Streak</th><th>Majority me</th><th>Akela Minority</th><th>2-2 me</th></tr></thead><tbody>';
+  S.ex.forEach((e, i) => {
+    const l10 = e.hist.slice(-10), l10c = l10.reduce((a, b) => a + b, 0);
+    const st = e.streak > 0 ? `<span class="ok">🔥 ${e.streak}W</span>` : e.streak < 0 ? `<span class="no">${-e.streak}L</span>` : '—';
+    const maj = merge(e.role.maj4, e.role.maj3);
+    h += `<tr><td style="${ec(i)}"><span class="dot"></span><b>${esc(N[i])}</b></td><td>${frac(e.c, e.n)}</td><td>${frac(l10c, l10.length)}</td><td>${st}</td>
+      <td>${frac(maj.c, maj.n)}</td><td>${frac(e.role.min.c, e.role.min.n)}</td><td>${frac(e.role.tie.c, e.role.tie.n)}</td></tr>`;
+  });
+  h += '</tbody></table>';
+
+  h += '<h2 style="margin-top:20px;font-size:14px">Head-to-Head <span class="mut small" style="font-weight:400">— jab dono opposite the, row wala kitni baar sahi</span></h2><table><thead><tr><th></th>' +
+    N.map(x => `<th>vs ${esc(x)}</th>`).join('') + '</tr></thead><tbody>';
+  for (let i = 0; i < 4; i++) {
+    h += `<tr><td style="${ec(i)}"><span class="dot"></span><b>${esc(N[i])}</b></td>`;
+    for (let j = 0; j < 4; j++) h += i === j ? '<td class="mut">—</td>' : `<td>${frac(S.pair[i][j].c, S.pair[i][j].n)}</td>`;
+    h += '</tr>';
+  }
+  $('#expertTbl').innerHTML = h + '</tbody></table>';
+}
+
+function renderSplit() {
+  const S = R.S;
+  const rows = ['4-0', '3-1', '2-2'].map(k => {
+    const s = S.split[k], sys = EV.bySplit[k];
+    return `<tr><td><b>${k}</b></td><td>${s.n}</td>
+      <td>${k === '2-2' ? '<span class="mut">n/a</span>' : frac(s.c, s.n)}</td>
+      <td>${k === '2-2' ? '<span class="mut">n/a</span>' : frac(s.n - s.c, s.n)}</td>
+      <td>${frac(sys.c, sys.n)}</td></tr>`;
+  }).join('');
+  $('#splitTbl').innerHTML = `<table><thead><tr><th>Split</th><th>Matches</th><th>Majority jeeti</th><th>Minority jeeti</th><th>System accuracy</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function renderPatterns() {
+  const entries = Object.entries(R.S.pattern).sort((a, b) => b[1].n - a[1].n);
+  if (!entries.length) { $('#patTbl').innerHTML = '<div class="empty">Result aane ke baad patterns yaha dikhenge.</div>'; return; }
+  const rows = entries.map(([key, v]) => {
+    const lbl = E.patternLabel(key, names());
+    const [s1, s2] = lbl.split(' vs ');
+    const r = v.c / v.n;
+    const follow = !s2 ? s1.replace(' (sab same)', '') : r > 0.5 ? s1 : r < 0.5 ? s2 : 'koi edge nahi';
+    return `<tr><td>${esc(lbl)}</td><td>${v.n}</td><td>${frac(v.c, v.n)}</td>
+      <td>${s2 ? frac(v.n - v.c, v.n) : '<span class="mut">—</span>'}</td><td><b>${esc(follow)}</b></td></tr>`;
+  }).join('');
+  $('#patTbl').innerHTML = `<table><thead><tr><th>Pattern</th><th>Times</th><th>Left side sahi</th><th>Right side sahi</th><th>Follow</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function renderBuckets() {
+  const desc = { STRONG: '72%+', GOOD: '62–72%', LEAN: '55–62%', RISKY: '< 55%' };
+  const rows = EV.buckets.map(b => `<tr><td><span class="pill ${b.lab}">${b.lab}</span></td><td>${desc[b.lab]}</td><td>${b.n}</td><td>${frac(b.c, b.n)}</td></tr>`).join('');
+  $('#bucketTbl').innerHTML = `<table><thead><tr><th>Level</th><th>System confidence</th><th>Picks</th><th>Actual accuracy</th></tr></thead><tbody>${rows}</tbody></table>
+    <p class="small mut">Agar STRONG/GOOD ki actual accuracy baaki se zyada hai, to system ka confidence bharose layak hai — RISKY matches skip karna better ho sakta hai.</p>`;
+}
+
+function renderModels() {
+  const rows = E.MODELS.map(md => {
+    const mc = EV.models[md.id];
+    return `<tr><td><b>${md.name}</b><div class="mut small">${md.desc}</div></td><td>${frac(mc.c, mc.n)}</td>
+      <td><div class="bar"><i style="width:${(R.w[md.id] * 100).toFixed(1)}%"></i></div></td><td>${pct(R.w[md.id])}</td></tr>`;
+  }).join('');
+  $('#modelTbl').innerHTML = `<table><thead><tr><th>Model</th><th>Accuracy</th><th>Current weight</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+    <p class="small mut">Jo model zyada sahi nikalta hai uska weight apne aap badhta hai. Final prediction = sab models ka weighted mix.</p>`;
+}
+
+function renderChart() {
+  const s = EV.series;
+  if (s.length < 2) { $('#chart').innerHTML = '<div class="empty">Chart ke liye kam se kam 2 completed matches chahiye.</div>'; return; }
+  const W = 600, H = 230, pl = 38, pr = 10, pt = 10, pb = 22, n = s.length;
+  const x = i => pl + (W - pl - pr) * i / (n - 1);
+  const y = v => pt + (H - pt - pb) * (1 - v);
+  const path = key => s.map((d, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(d[key]).toFixed(1)}`).join('');
+  let g = '';
+  [0, 0.25, 0.5, 0.75, 1].forEach(v => {
+    g += `<line x1="${pl}" x2="${W - pr}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)" ${v === 0.5 ? 'stroke-dasharray="4 4"' : ''}/>
+      <text x="${pl - 6}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="var(--mut)">${v * 100}%</text>`;
+  });
+  g += `<text x="${W - pr}" y="${H - 4}" text-anchor="end" font-size="11" fill="var(--mut)">match ${n}</text>
+        <text x="${pl}" y="${H - 4}" font-size="11" fill="var(--mut)">match 1</text>`;
+  $('#chart').innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Cumulative accuracy">${g}
+    <path d="${path('m')}" fill="none" stroke="var(--warn)" stroke-width="2"/>
+    <path d="${path('s')}" fill="none" stroke="var(--acc)" stroke-width="2.5"/></svg>
+    <div class="legend"><span><i style="background:var(--acc)"></i>System (${pct(s[n - 1].s)})</span>
+    <span><i style="background:var(--warn)"></i>Simple majority, 2-2 = 50% (${pct(s[n - 1].m)})</span></div>`;
+}
+
+/* ---------- events ---------- */
+$('#pickers').addEventListener('click', e => {
+  const b = e.target.closest('button[data-i]');
+  if (!b) return;
+  form.preds[+b.dataset.i] = +b.dataset.v;
+  renderPickers();
+});
+$('#pickers').addEventListener('input', e => {
+  const inp = e.target.closest('input[data-name]');
+  if (!inp) return;
+  const i = +inp.dataset.name;
+  state.experts[i] = inp.value;
+  document.querySelector(`[data-av="${i}"]`).textContent = initial(inp.value || DEFAULT_NAMES[i]);
+});
+$('#pickers').addEventListener('change', e => {
+  if (!e.target.closest('input[data-name]')) return;
+  write(setDoc(userDoc(), { experts: state.experts.map(String) }, { merge: true }));
+  renderAll(true);
+});
+$('#pickers').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.target.closest('input[data-name]')) e.target.blur();
+});
+['#t1', '#t2'].forEach(s => $(s).addEventListener('input', updatePickerTeams));
+$('#btnAdd').addEventListener('click', submitForm);
+$('#btnCancel').addEventListener('click', resetForm);
+
+$('#tbl').addEventListener('change', e => {
+  const sel = e.target.closest('select[data-res]');
+  if (!sel) return;
+  const result = sel.value === '' ? null : sel.value === 'NR' ? 'NR' : +sel.value;
+  write(updateDoc(matchDoc(sel.dataset.res), { result }));
+});
+$('#tbl').addEventListener('click', e => {
+  const b = e.target.closest('button[data-act]');
+  if (!b) return;
+  const id = b.dataset.id;
+  if (b.dataset.act === 'det') {
+    openDetails.has(id) ? openDetails.delete(id) : openDetails.add(id);
+    document.querySelector(`tr[data-det="${CSS.escape(id)}"]`).hidden = !openDetails.has(id);
+  } else if (b.dataset.act === 'edit') editMatch(id);
+  else if (b.dataset.act === 'del' && confirm('Ye match delete karna hai?')) {
+    openDetails.delete(id);
+    if (form.editId === id) resetForm();
+    write(deleteDoc(matchDoc(id)));
+  }
+});
+
+function download(name, text, type) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type }));
+  a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+$('#btnExport').addEventListener('click', () => {
+  const data = { experts: state.experts, matches: state.matches.map(m => clean(m)) };
+  download(`cricket-predictor-backup-${today()}.json`, JSON.stringify(data, null, 2), 'application/json');
+});
+$('#btnImport').addEventListener('click', () => $('#fileImport').click());
+$('#fileImport').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  let s;
+  try {
+    s = JSON.parse(await f.text());
+    const okMatch = m => m && m.id && m.t1 && m.t2 && Array.isArray(m.preds) && m.preds.length === 4 &&
+      m.preds.every(p => p === 0 || p === 1) && [null, 0, 1, 'NR'].includes(m.result);
+    if (!Array.isArray(s.matches) || !Array.isArray(s.experts) || s.experts.length !== 4 || !s.matches.every(okMatch)) throw 0;
+  } catch (err) { return alert('Invalid backup file.'); }
+  if (!confirm(`${s.matches.length} matches server pe restore honge, current server data replace hoga. Continue?`)) return;
+  resetForm();
+  replaceAll(s.experts, s.matches);
+});
+$('#btnCsv').addEventListener('click', () => {
+  const q = v => `"${String(v).replace(/"/g, '""')}"`;
+  const lines = [['#', 'Date', 'Team 1', 'Team 2', 'Note', ...names(), 'Split', 'System Pick', 'Confidence', 'Level', 'Winner', 'System Correct'].map(q).join(',')];
+  R.rows.forEach(({ m, pred }, i) => {
+    const tn = [m.t1, m.t2], done = E.isDone(m);
+    lines.push([i + 1, m.date, m.t1, m.t2, m.note || '', ...m.preds.map(p => tn[p]), E.splitOf(m.preds).key,
+      tn[pred.pick], (pred.conf * 100).toFixed(1) + '%', pred.verdict,
+      done ? tn[m.result] : m.result === 'NR' ? 'No result' : '', done ? (pred.pick === m.result ? 'YES' : 'NO') : ''].map(q).join(','));
+  });
+  download(`cricket-predictor-${today()}.csv`, '﻿' + lines.join('\r\n'), 'text/csv');
+});
+$('#btnReset').addEventListener('click', () => {
+  if (!confirm('Server se SAARE matches delete ho jayenge (expert names rahenge). Pehle Backup le lo. Pakka reset karna hai?')) return;
+  resetForm();
+  replaceAll(state.experts, []);
+});
+</script>
+</body>
+</html>
