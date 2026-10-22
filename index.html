@@ -83,9 +83,12 @@
   .pname input:hover { border-color: var(--line); }
   .pname input:focus { border: 1px solid var(--ec); box-shadow: none; background: var(--panel); }
   .pname .small { padding-left: 7px; }
-  .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .seg { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; }
   .seg button { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 10px 8px; font-weight: 600; }
   .seg button.on { background: var(--ec); border-color: var(--ec); color: #fff; box-shadow: 0 4px 14px rgba(0,0,0,.3); }
+  .seg button.paidbtn { padding: 10px 12px; color: var(--warn); }
+  .seg button.paidbtn.on { background: var(--warn); border-color: var(--warn); color: #1a1200; }
+  .picker.is-paid .avatar { filter: grayscale(.7); opacity: .7; }
 
   .reco { border-radius: 12px; padding: 16px; margin-bottom: 16px; background: var(--panel2); border: 1px dashed var(--line); }
   .reco.live { border: 1px solid rgba(79,140,255,.45); background: linear-gradient(135deg, rgba(79,140,255,.14), rgba(123,92,255,.10)); }
@@ -105,6 +108,7 @@
   .chip { display: inline-block; padding: 3px 10px; border-radius: 999px; background: var(--panel3); font-size: 12px; font-weight: 600; }
   .chip.ok { background: rgba(47,191,113,.16); color: #6fe0a3; }
   .chip.no { background: rgba(239,83,80,.16); color: #ff8f8c; }
+  .chip.paid { background: rgba(245,165,36,.14); color: var(--warn); }
   tr.det > td { white-space: normal; background: var(--panel2) !important; }
   .ok { color: var(--good); } .no { color: var(--bad); }
   .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 800; letter-spacing: .4px; }
@@ -334,8 +338,11 @@ const matchesCol = () => collection(db, 'users', user.uid, 'matches');
 const clean = (m, seq) => ({
   id: String(m.id), seq: seq !== undefined ? seq : (m.seq || Date.now()),
   t1: String(m.t1), t2: String(m.t2), date: m.date || '', note: m.note || '',
-  preds: m.preds.map(Number), result: m.result === undefined ? null : m.result,
+  preds: m.preds.map(p => (p === null || p === undefined ? null : Number(p))), result: m.result === undefined ? null : m.result,
 });
+// form keeps 'P' for paid (null there means "not chosen yet"); stored/engine form uses null for paid
+const toEngine = preds => preds.map(p => (p === 'P' ? null : p));
+const toForm = preds => preds.map(p => (p === null ? 'P' : p));
 
 function setSync(kind, text) {
   const el = $('#sync');
@@ -476,7 +483,7 @@ function teamNames() { return [$('#t1').value.trim() || 'Team 1', $('#t2').value
 function renderPickers() {
   const [a, b] = teamNames();
   $('#pickers').innerHTML = state.experts.map((e, i) => `
-    <div class="picker" style="${ec(i)}">
+    <div class="picker ${form.preds[i] === 'P' ? 'is-paid' : ''}" style="${ec(i)}">
       <div class="phead">
         <div class="avatar" data-av="${i}">${esc(initial(e || DEFAULT_NAMES[i]))}</div>
         <div class="pname">
@@ -487,6 +494,7 @@ function renderPickers() {
       <div class="seg">
         <button data-i="${i}" data-v="0" class="${form.preds[i] === 0 ? 'on' : ''}" title="${esc(a)}">${esc(a)}</button>
         <button data-i="${i}" data-v="1" class="${form.preds[i] === 1 ? 'on' : ''}" title="${esc(b)}">${esc(b)}</button>
+        <button data-i="${i}" data-v="P" class="paidbtn ${form.preds[i] === 'P' ? 'on' : ''}" title="Prediction paid hai / pata nahi">💰 Paid</button>
       </div>
     </div>`).join('');
   renderPreview();
@@ -494,7 +502,7 @@ function renderPickers() {
 
 function updatePickerTeams() {
   const [a, b] = teamNames();
-  document.querySelectorAll('#pickers button[data-v]').forEach(btn => {
+  document.querySelectorAll('#pickers button[data-v="0"], #pickers button[data-v="1"]').forEach(btn => {
     btn.textContent = btn.title = btn.dataset.v === '0' ? a : b;
   });
   renderPreview();
@@ -507,10 +515,16 @@ function renderPreview() {
     box.className = 'reco';
     const left = form.preds.filter(p => p === null).length;
     box.innerHTML = `<div class="lbl">System Recommendation</div>
-      <div class="mut" style="margin-top:6px">${!t1 || !t2 ? 'Dono teams ke naam daalo' : `Abhi ${left} expert ki prediction baaki hai`} — fir yaha system batayega kiske saath jana hai.</div>`;
+      <div class="mut" style="margin-top:6px">${!t1 || !t2 ? 'Dono teams ke naam daalo' : `Abhi ${left} expert ki prediction baaki hai (team ya 💰 Paid select karo)`} — fir yaha system batayega kiske saath jana hai.</div>`;
     return;
   }
-  const m = { t1, t2, preds: form.preds.slice() };
+  if (form.preds.every(p => p === 'P')) {
+    box.className = 'reco';
+    box.innerHTML = `<div class="lbl">System Recommendation</div>
+      <div class="no" style="margin-top:6px">Charo predictions paid hain — kam se kam 1 expert ki prediction open honi chahiye.</div>`;
+    return;
+  }
+  const m = { t1, t2, preds: toEngine(form.preds) };
   const pr = E.predictWith(R, m, names());
   const tn = [t1, t2];
   box.className = 'reco live';
@@ -540,8 +554,9 @@ function submitForm() {
   const t1 = $('#t1').value.trim(), t2 = $('#t2').value.trim();
   if (!t1 || !t2) return alert('Dono team ka naam daalo.');
   if (E.norm(t1) === E.norm(t2)) return alert('Dono team same nahi ho sakti.');
-  if (form.preds.includes(null)) return alert('Charo experts ki prediction select karo.');
-  const data = { t1, t2, date: $('#date').value || today(), note: $('#note').value.trim(), preds: form.preds.slice() };
+  if (form.preds.includes(null)) return alert('Charo experts ke liye team ya 💰 Paid select karo.');
+  if (form.preds.every(p => p === 'P')) return alert('Kam se kam 1 expert ki prediction open honi chahiye.');
+  const data = { t1, t2, date: $('#date').value || today(), note: $('#note').value.trim(), preds: toEngine(form.preds) };
   const old = form.editId && state.matches.find(x => x.id === form.editId);
   let m;
   if (old) {
@@ -561,7 +576,7 @@ function submitForm() {
 function editMatch(id) {
   const m = state.matches.find(x => x.id === id);
   if (!m) return;
-  form = { preds: m.preds.slice(), editId: id };
+  form = { preds: toForm(m.preds), editId: id };
   $('#t1').value = m.t1; $('#t2').value = m.t2; $('#date').value = m.date || ''; $('#note').value = m.note || '';
   $('#formTitle').textContent = 'Edit Match';
   $('#btnAdd').textContent = 'Save Changes';
@@ -619,8 +634,9 @@ function renderTable() {
       <td class="mut idx">${idx + 1}</td>
       <td class="mut" data-label="#${idx + 1} · Date">${esc(m.date || '')}</td>
       <td class="match wide nolabel"><span><b>${esc(m.t1)}</b> <span class="mut">vs</span> <b>${esc(m.t2)}</b></span>${m.note ? `<div class="mut small">${esc(m.note)}</div>` : ''}</td>
-      ${m.preds.map((p, i) => `<td data-label="${esc(N[i])}"><span><span class="chip ${done ? (p === m.result ? 'ok' : 'no') : ''}">${esc(tn[p])}</span></span></td>`).join('')}
-      <td data-label="Split"><span><b>${sp.key}</b>${sp.majTeam !== null ? ` <span class="mut small">→ ${esc(tn[sp.majTeam])}</span>` : ''}</span></td>
+      ${m.preds.map((p, i) => `<td data-label="${esc(N[i])}"><span>${p === null ? '<span class="chip paid">💰 Paid</span>'
+        : `<span class="chip ${done ? (p === m.result ? 'ok' : 'no') : ''}">${esc(tn[p])}</span>`}</span></td>`).join('')}
+      <td data-label="Split"><span><b>${sp.key}</b>${sp.majTeam !== null ? ` <span class="mut small">→ ${esc(tn[sp.majTeam])}</span>` : ''}${sp.paid ? ` <span class="small" style="color:var(--warn)">· ${sp.paid} paid</span>` : ''}</span></td>
       <td data-label="System Pick" class="wide"><span><b>${esc(tn[pred.pick])}</b> <span class="mut small">${pct(pred.conf)}</span> <span class="pill ${pred.verdict}">${pred.verdict}</span></span></td>
       <td data-label="Final Winner"><select data-res="${esc(m.id)}" style="min-width:150px">
         <option value="" ${m.result === null ? 'selected' : ''}>— Winner select karo —</option>
@@ -650,14 +666,13 @@ function detailsHtml(pred, m) {
 
 function renderExperts() {
   const S = R.S, N = names();
-  const merge = (a, b) => ({ c: a.c + b.c, n: a.n + b.n });
-  let h = '<table><thead><tr><th>Expert</th><th>Overall</th><th>Last 10</th><th>Streak</th><th>Majority me</th><th>Akela Minority</th><th>2-2 me</th></tr></thead><tbody>';
+  const cf = r => (r ? frac(r.c, r.n) : '<span class="mut">—</span>');
+  let h = '<table><thead><tr><th>Expert</th><th>Overall</th><th>Last 10</th><th>Streak</th><th>Majority me</th><th>Minority me</th><th>Tie (2-2 / 1-1)</th><th>Akela open</th><th>Paid</th></tr></thead><tbody>';
   S.ex.forEach((e, i) => {
     const l10 = e.hist.slice(-10), l10c = l10.reduce((a, b) => a + b, 0);
     const st = e.streak > 0 ? `<span class="ok">🔥 ${e.streak}W</span>` : e.streak < 0 ? `<span class="no">${-e.streak}L</span>` : '—';
-    const maj = merge(e.role.maj4, e.role.maj3);
     h += `<tr><td style="${ec(i)}"><span class="dot"></span><b>${esc(N[i])}</b></td><td>${frac(e.c, e.n)}</td><td>${frac(l10c, l10.length)}</td><td>${st}</td>
-      <td>${frac(maj.c, maj.n)}</td><td>${frac(e.role.min.c, e.role.min.n)}</td><td>${frac(e.role.tie.c, e.role.tie.n)}</td></tr>`;
+      <td>${cf(e.cat.maj)}</td><td>${cf(e.cat.min)}</td><td>${cf(e.cat.tie)}</td><td>${cf(e.cat.solo)}</td><td>${e.paid || '—'}</td></tr>`;
   });
   h += '</tbody></table>';
 
@@ -673,14 +688,17 @@ function renderExperts() {
 
 function renderSplit() {
   const S = R.S;
-  const rows = ['4-0', '3-1', '2-2'].map(k => {
-    const s = S.split[k], sys = EV.bySplit[k];
-    return `<tr><td><b>${k}</b></td><td>${s.n}</td>
-      <td>${k === '2-2' ? '<span class="mut">n/a</span>' : frac(s.c, s.n)}</td>
-      <td>${k === '2-2' ? '<span class="mut">n/a</span>' : frac(s.n - s.c, s.n)}</td>
+  const keys = E.SPLIT_ORDER.filter((k, i) => i < 3 || S.split[k]);
+  const rows = keys.map(k => {
+    const s = S.split[k] || { c: 0, n: 0 }, sys = EV.bySplit[k] || { c: 0, n: 0 };
+    const [a, b] = k.split('-').map(Number), open = a + b, tie = a === b;
+    const label = k === '1-0' ? 'sirf 1 open → wo sahi' : '';
+    return `<tr><td><b>${k}</b>${open < 4 ? ` <span class="small" style="color:var(--warn)">${4 - open} paid</span>` : ''}${label ? `<div class="mut small">${label}</div>` : ''}</td><td>${s.n}</td>
+      <td>${tie ? '<span class="mut">n/a</span>' : frac(s.c, s.n)}</td>
+      <td>${tie ? '<span class="mut">n/a</span>' : frac(s.n - s.c, s.n)}</td>
       <td>${frac(sys.c, sys.n)}</td></tr>`;
   }).join('');
-  $('#splitTbl').innerHTML = `<table><thead><tr><th>Split</th><th>Matches</th><th>Majority jeeti</th><th>Minority jeeti</th><th>System accuracy</th></tr></thead><tbody>${rows}</tbody></table>`;
+  $('#splitTbl').innerHTML = `<table><thead><tr><th>Split (open votes)</th><th>Matches</th><th>Majority jeeti</th><th>Minority jeeti</th><th>System accuracy</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 function renderPatterns() {
@@ -688,9 +706,10 @@ function renderPatterns() {
   if (!entries.length) { $('#patTbl').innerHTML = '<div class="empty">Result aane ke baad patterns yaha dikhenge.</div>'; return; }
   const rows = entries.map(([key, v]) => {
     const lbl = E.patternLabel(key, names());
-    const [s1, s2] = lbl.split(' vs ');
+    const { a, b } = E.patternSides(key, names());
+    const s1 = a.join('+'), s2 = b.join('+');
     const r = v.c / v.n;
-    const follow = !s2 ? s1.replace(' (sab same)', '') : r > 0.5 ? s1 : r < 0.5 ? s2 : 'koi edge nahi';
+    const follow = r > 0.5 ? s1 : r < 0.5 ? (s2 || `${s1} ka opposite`) : 'koi edge nahi';
     return `<tr><td>${esc(lbl)}</td><td>${v.n}</td><td>${frac(v.c, v.n)}</td>
       <td>${s2 ? frac(v.n - v.c, v.n) : '<span class="mut">—</span>'}</td><td><b>${esc(follow)}</b></td></tr>`;
   }).join('');
@@ -739,7 +758,7 @@ function renderChart() {
 $('#pickers').addEventListener('click', e => {
   const b = e.target.closest('button[data-i]');
   if (!b) return;
-  form.preds[+b.dataset.i] = +b.dataset.v;
+  form.preds[+b.dataset.i] = b.dataset.v === 'P' ? 'P' : +b.dataset.v;
   renderPickers();
 });
 $('#pickers').addEventListener('input', e => {
@@ -800,7 +819,7 @@ $('#fileImport').addEventListener('change', async e => {
   try {
     s = JSON.parse(await f.text());
     const okMatch = m => m && m.id && m.t1 && m.t2 && Array.isArray(m.preds) && m.preds.length === 4 &&
-      m.preds.every(p => p === 0 || p === 1) && [null, 0, 1, 'NR'].includes(m.result);
+      m.preds.every(p => p === 0 || p === 1 || p === null) && m.preds.some(p => p !== null) && [null, 0, 1, 'NR'].includes(m.result);
     if (!Array.isArray(s.matches) || !Array.isArray(s.experts) || s.experts.length !== 4 || !s.matches.every(okMatch)) throw 0;
   } catch (err) { return alert('Invalid backup file.'); }
   if (!confirm(`${s.matches.length} matches server pe restore honge, current server data replace hoga. Continue?`)) return;
@@ -812,7 +831,7 @@ $('#btnCsv').addEventListener('click', () => {
   const lines = [['#', 'Date', 'Team 1', 'Team 2', 'Note', ...names(), 'Split', 'System Pick', 'Confidence', 'Level', 'Winner', 'System Correct'].map(q).join(',')];
   R.rows.forEach(({ m, pred }, i) => {
     const tn = [m.t1, m.t2], done = E.isDone(m);
-    lines.push([i + 1, m.date, m.t1, m.t2, m.note || '', ...m.preds.map(p => tn[p]), E.splitOf(m.preds).key,
+    lines.push([i + 1, m.date, m.t1, m.t2, m.note || '', ...m.preds.map(p => (p === null ? 'PAID' : tn[p])), E.splitOf(m.preds).key,
       tn[pred.pick], (pred.conf * 100).toFixed(1) + '%', pred.verdict,
       done ? tn[m.result] : m.result === 'NR' ? 'No result' : '', done ? (pred.pick === m.result ? 'YES' : 'NO') : ''].map(q).join(','));
   });
