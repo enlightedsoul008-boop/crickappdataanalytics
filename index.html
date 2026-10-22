@@ -363,15 +363,41 @@ async function write(promise) {
     alert('Server pe save nahi hua: ' + (e.code || e.message) + '\nInternet check karke dobara try karo.');
   }
 }
+let loadError = null, loadTimer = null;
+function showLoadError(title, hint) {
+  loadError = { title, hint };
+  if (!booted && R) renderTable();
+}
 function onSyncError(e) {
   console.error(e);
   setSync('err', 'Server error');
-  if (e.code === 'permission-denied') alert('Server ne access deny kiya. Firestore Rules me apna email sahi daala hai? (README dekho)');
+  const email = esc(user ? user.email : '');
+  if (e.code === 'permission-denied') {
+    showLoadError('Server ne access deny kiya (permission-denied)',
+      `Aap <b>${email}</b> se logged-in ho. Firebase → Firestore → <b>Rules</b> me bilkul yahi email hona chahiye (same spelling, chhote letters), fir <b>Publish</b> dabao aur page refresh karo.`);
+  } else if (e.code === 'not-found' || e.code === 'failed-precondition') {
+    showLoadError('Firestore database nahi mila (' + esc(e.code) + ')',
+      'Firebase → Databases and storage → <b>Firestore</b> me database bana hai? Database ID <b>(default)</b> aur <b>Standard edition</b> hona chahiye.');
+  } else {
+    showLoadError('Server error: ' + esc(e.code || ''), esc(e.message || String(e)));
+  }
 }
 
 function startSync() {
   gotExperts = gotMatches = false;
+  loadError = null;
   setSync('busy', 'Loading…');
+  clearTimeout(loadTimer);
+  loadTimer = setTimeout(() => {
+    if (booted || loadError) return;
+    setSync('err', 'Not connected');
+    showLoadError('Server se connect nahi ho pa raha',
+      `<ol style="text-align:left;display:inline-block;margin:6px 0 0">
+        <li>Internet check karo</li>
+        <li><b>Ad-blocker / Brave Shields</b> is website ke liye OFF karo (ye Firebase ko block kar dete hain)</li>
+        <li>Firebase → <b>Firestore</b> me database bana hai? ID <b>(default)</b>, <b>Standard</b> edition</li>
+        <li>Dusre browser (Chrome) ya Incognito me try karo</li></ol>`);
+  }, 15000);
   unsubs.push(onSnapshot(userDoc(), snap => {
     const ex = snap.exists() ? snap.data().experts : null;
     if (Array.isArray(ex) && ex.length === 4) state.experts = ex.map(String);
@@ -385,6 +411,7 @@ function startSync() {
   }, onSyncError));
 }
 function stopSync() {
+  clearTimeout(loadTimer);
   unsubs.forEach(u => u()); unsubs = [];
   state = { experts: DEFAULT_NAMES.slice(), matches: [] };
   booted = false;
@@ -619,7 +646,9 @@ function renderKpis() {
 function renderTable() {
   const N = names();
   if (!booted) {
-    $('#tbl').innerHTML = '<tr><td class="empty"><div class="e">☁️</div>Server se data load ho raha hai…</td></tr>';
+    $('#tbl').innerHTML = loadError
+      ? `<tr><td class="empty" style="white-space:normal"><div class="e">⚠️</div><b class="no">${loadError.title}</b><div style="margin-top:8px">${loadError.hint}</div></td></tr>`
+      : '<tr><td class="empty"><div class="e">☁️</div>Server se data load ho raha hai…</td></tr>';
     return;
   }
   if (!R.rows.length) {
