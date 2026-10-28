@@ -1,6 +1,8 @@
 // Prediction engine: learns from completed matches and combines several
 // "mini models" whose weights adapt to how well each one has actually performed.
 // A prediction value is 0 (team 1), 1 (team 2) or null (paid / hidden).
+// m.preds    = what was known when the match was entered (drives the prediction + pattern stats)
+// m.revealed = paid picks that became known only later (used only to learn expert records)
 (function (root) {
   'use strict';
 
@@ -73,31 +75,48 @@
     return s;
   }
 
+  // Decision-time picks with later-revealed paid picks filled in.
+  function fullPreds(m) {
+    return m.preds.map((p, i) => (isOpen(p) ? p : m.revealed && isOpen(m.revealed[i]) ? m.revealed[i] : null));
+  }
+
+  // Applies an edit to a stored match. data.preds must already be in the new team order.
+  function mergeEdit(old, data) {
+    const swapped = norm(data.t1) === norm(old.t2) && norm(data.t2) === norm(old.t1);
+    const m = { ...old, ...data };
+    if (swapped && isDone(old)) m.result = 1 - old.result;
+    m.revealed = data.preds.map((p, i) => (isOpen(p) ? null : data.revealed && isOpen(data.revealed[i]) ? data.revealed[i] : null));
+    return m;
+  }
+
   function newStats() {
     const ex = [], pair = [];
     for (let i = 0; i < 4; i++) {
-      ex.push({ c: 0, n: 0, paid: 0, hist: [], streak: 0, teams: {}, role: {}, cat: {} });
+      ex.push({ c: 0, n: 0, paid: 0, paidRev: cnt(), hist: [], streak: 0, teams: {}, role: {}, cat: {} });
       pair.push([cnt(), cnt(), cnt(), cnt()]);
     }
     return { n: 0, ex, pair, split: {}, pattern: {} };
   }
 
   function update(S, m) {
-    const P = m.preds, r = m.result;
-    P.forEach((p, i) => {
+    const P = m.preds, F = fullPreds(m), r = m.result;
+    F.forEach((p, i) => {
       const e = S.ex[i];
-      if (!isOpen(p)) { e.paid++; return; }
+      if (!isOpen(P[i])) e.paid++;
+      if (!isOpen(p)) return;
       const ok = p === r ? 1 : 0;
       e.c += ok; e.n++;
       e.hist.push(ok);
       e.streak = ok ? (e.streak >= 0 ? e.streak + 1 : 1) : (e.streak <= 0 ? e.streak - 1 : -1);
+      [norm(m.t1), norm(m.t2)].forEach(t => { const tc = get(e.teams, t); tc.c += ok; tc.n++; });
+      if (!isOpen(P[i])) { e.paidRev.c += ok; e.paidRev.n++; return; }
+      // role records describe the situation that was visible at decision time
       const ro = roleOf(P, i);
       const a = get(e.role, ro.key); a.c += ok; a.n++;
       const b = get(e.cat, ro.cat); b.c += ok; b.n++;
-      [norm(m.t1), norm(m.t2)].forEach(t => { const tc = get(e.teams, t); tc.c += ok; tc.n++; });
     });
     for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) {
-      if (i !== j && isOpen(P[i]) && isOpen(P[j]) && P[i] !== P[j]) { S.pair[i][j].n++; if (P[i] === r) S.pair[i][j].c++; }
+      if (i !== j && isOpen(F[i]) && isOpen(F[j]) && F[i] !== F[j]) { S.pair[i][j].n++; if (F[i] === r) S.pair[i][j].c++; }
     }
     const sp = splitOf(P), s = get(S.split, sp.key);
     s.n++; if (sp.majTeam !== null && sp.majTeam === r) s.c++;
@@ -306,7 +325,7 @@
   }
 
   const api = { MODELS, BUCKETS, SPLIT_ORDER, run, predictWith, evaluate, roleOf, splitOf,
-                patternKey, patternLabel, patternSides, isDone, isOpen, norm };
+                patternKey, patternLabel, patternSides, isDone, isOpen, norm, fullPreds, mergeEdit };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Engine = api;
 })(this);

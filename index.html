@@ -89,6 +89,10 @@
   .seg button.paidbtn { padding: 10px 12px; color: var(--warn); }
   .seg button.paidbtn.on { background: var(--warn); border-color: var(--warn); color: #1a1200; }
   .picker.is-paid .avatar { filter: grayscale(.7); opacity: .7; }
+  .rev { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); }
+  .rev .small { color: var(--warn); font-weight: 600; margin-bottom: 6px; }
+  .rev .seg { grid-template-columns: 1fr 1fr; }
+  .rev .seg button.on { background: var(--warn); border-color: var(--warn); color: #1a1200; }
 
   .reco { border-radius: 12px; padding: 16px; margin-bottom: 16px; background: var(--panel2); border: 1px dashed var(--line); }
   .reco.live { border: 1px solid rgba(79,140,255,.45); background: linear-gradient(135deg, rgba(79,140,255,.14), rgba(123,92,255,.10)); }
@@ -145,6 +149,14 @@
   .remember { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--mut); font-weight: 500; cursor: pointer; }
   .remember input { width: auto; accent-color: var(--acc); }
   .lerr { color: var(--bad); font-size: 13px; min-height: 18px; text-align: center; }
+  .locked { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: 10px; background: var(--panel2); border: 1px solid var(--line); font-weight: 700; }
+  .locked.nr { color: var(--mut); font-weight: 600; }
+  dialog#pwDlg { width: min(360px, calc(100vw - 32px)); background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 16px; padding: 22px; box-shadow: 0 20px 60px rgba(0,0,0,.5); }
+  dialog#pwDlg::backdrop { background: rgba(0,0,0,.6); backdrop-filter: blur(3px); }
+  dialog#pwDlg h3 { margin: 0 0 4px; font-size: 17px; }
+  dialog#pwDlg form { display: flex; flex-direction: column; gap: 12px; }
+  dialog#pwDlg input { font-size: 16px; }
+  dialog#pwDlg .btns { display: flex; gap: 10px; justify-content: flex-end; }
   .lockbox .primary { width: 100%; }
   .notice { text-align: left; margin-top: 18px; padding: 14px; border-radius: 12px; background: var(--panel2); border: 1px solid var(--line); font-size: 13px; }
   .notice ol { margin: 8px 0 0; padding-left: 18px; } .notice li { margin: 3px 0; }
@@ -201,7 +213,7 @@
 <div class="lock">
   <div class="lockbox">
     <div class="logo">🏏</div>
-    <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v8</span></h1>
+    <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v11</span></h1>
     <div class="mut small" id="lockSub">Connecting…</div>
     <form id="loginForm" autocomplete="on" hidden>
       <div class="field"><label for="email">Email</label><input id="email" type="email" autocomplete="username" placeholder="you@gmail.com" required></div>
@@ -219,12 +231,26 @@
   </div>
 </div>
 
+<dialog id="pwDlg">
+  <form id="pwDlgForm">
+    <div>
+      <h3>🔒 Password daalo</h3>
+      <div class="mut small" id="pwDlgMsg"></div>
+    </div>
+    <input id="pwDlgIn" type="password" autocomplete="current-password" placeholder="Login password">
+    <div class="lerr" id="pwDlgErr"></div>
+    <div class="btns">
+      <button type="button" id="pwDlgCancel">Cancel</button>
+      <button type="submit" class="primary" id="pwDlgOk">Unlock</button>
+    </div>
+  </form>
+</dialog>
 <header>
   <div class="hwrap">
     <div class="brand">
       <div class="logo">🏏</div>
       <div>
-        <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v8</span></h1>
+        <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v11</span></h1>
         <div class="small"><span class="sync" id="sync">Connecting</span> <span class="mut sub" id="who"></span></div>
       </div>
     </div>
@@ -295,7 +321,8 @@
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, setPersistence,
-         browserLocalPersistence, browserSessionPersistence } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+         browserLocalPersistence, browserSessionPersistence, EmailAuthProvider,
+         reauthenticateWithCredential } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import { getFirestore, collection, doc, onSnapshot, setDoc, updateDoc, deleteDoc, writeBatch } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
 window.__appStarted = true;
@@ -312,8 +339,12 @@ const initial = s => (String(s).trim()[0] || '?').toUpperCase();
 
 let state = { experts: DEFAULT_NAMES.slice(), matches: [] };
 let R, EV;
-let form = { preds: [null, null, null, null], editId: null };
+const emptyForm = () => ({ preds: [null, null, null, null], revealed: [null, null, null, null], editId: null, base: null });
+let form = emptyForm();
 const openDetails = new Set();
+const UNLOCK_MS = 5 * 60 * 1000;
+let unlockedUntil = 0;
+const unlockedRows = new Set(); // settled matches whose winner dropdown is temporarily unlocked
 const names = () => state.experts.map((n, i) => String(n || '').trim() || DEFAULT_NAMES[i]);
 
 /* ---------- Firebase ---------- */
@@ -341,6 +372,7 @@ const clean = (m, seq) => ({
   id: String(m.id), seq: seq !== undefined ? seq : (m.seq || Date.now()),
   t1: String(m.t1), t2: String(m.t2), date: m.date || '', note: m.note || '',
   preds: m.preds.map(p => (p === null || p === undefined ? null : Number(p))), result: m.result === undefined ? null : m.result,
+  revealed: m.preds.map((p, i) => (p === null && m.revealed && (m.revealed[i] === 0 || m.revealed[i] === 1) ? m.revealed[i] : null)),
 });
 // form keeps 'P' for paid (null there means "not chosen yet"); stored/engine form uses null for paid
 const toEngine = preds => preds.map(p => (p === 'P' ? null : p));
@@ -404,7 +436,9 @@ function startSync() {
     gotExperts = true; dataChanged();
   }, onSyncError));
   unsubs.push(onSnapshot(matchesCol(), { includeMetadataChanges: true }, snap => {
-    state.matches = snap.docs.map(d => d.data()).sort((a, b) => (a.seq - b.seq) || (a.id < b.id ? -1 : 1));
+    // learning order = match date, then entry order (so back-filled old matches land in the right place)
+    state.matches = snap.docs.map(d => d.data()).sort((a, b) =>
+      String(a.date || '').localeCompare(String(b.date || '')) || ((a.seq || 0) - (b.seq || 0)) || (a.id < b.id ? -1 : 1));
     gotMatches = true;
     if (!pending) setSync(snap.metadata.fromCache ? 'busy' : 'ok', snap.metadata.fromCache ? 'Offline' : 'Synced');
     dataChanged();
@@ -412,6 +446,7 @@ function startSync() {
 }
 function stopSync() {
   clearTimeout(loadTimer);
+  unlockedUntil = 0; unlockedRows.clear();
   unsubs.forEach(u => u()); unsubs = [];
   state = { experts: DEFAULT_NAMES.slice(), matches: [] };
   booted = false;
@@ -500,8 +535,11 @@ onAuthStateChanged(auth, u => {
     renderAll();
     startSync();
   } else {
+    if ($('#pwDlg').open) $('#pwDlgCancel').click();
     user = null;
     stopSync();
+    openDetails.clear();
+    if (R) resetForm(); else form = emptyForm();
     document.body.classList.add('locked');
     $('#lockSub').textContent = 'Login karo — data server pe safe hai';
     $('#loginForm').hidden = false;
@@ -528,11 +566,30 @@ function renderPickers() {
         <button data-i="${i}" data-v="1" class="${form.preds[i] === 1 ? 'on' : ''}" title="${esc(b)}">${esc(b)}</button>
         <button data-i="${i}" data-v="P" class="paidbtn ${form.preds[i] === 'P' ? 'on' : ''}">💰 Paid</button>
       </div>
+      ${form.editId && form.preds[i] === 'P' ? `
+      <div class="rev">
+        <div class="small">Match ke baad pata chala?</div>
+        <div class="seg">
+          <button data-r="${i}" data-v="0" class="${form.revealed[i] === 0 ? 'on' : ''}">${esc(a)}</button>
+          <button data-r="${i}" data-v="1" class="${form.revealed[i] === 1 ? 'on' : ''}">${esc(b)}</button>
+        </div>
+      </div>` : ''}
     </div>`).join('');
   renderPreview();
 }
 
 function updatePickerTeams() {
+  // While editing, if the two team names get swapped, move every pick with its team.
+  if (form.base) {
+    const t1 = E.norm($('#t1').value), t2 = E.norm($('#t2').value);
+    if (t1 && t2 && t1 === form.base[1] && t2 === form.base[0]) {
+      const flip = p => (p === 0 || p === 1 ? 1 - p : p);
+      form.preds = form.preds.map(flip);
+      form.revealed = form.revealed.map(flip);
+      form.base = [t1, t2];
+      return renderPickers();
+    }
+  }
   const [a, b] = teamNames();
   document.querySelectorAll('#pickers button[data-v="0"], #pickers button[data-v="1"]').forEach(btn => {
     btn.textContent = btn.title = btn.dataset.v === '0' ? a : b;
@@ -557,7 +614,7 @@ function renderPreview() {
     return;
   }
   const m = { t1, t2, preds: toEngine(form.preds) };
-  const pr = E.predictWith(R, m, names());
+  const pr = E.predictWith(previewContext(), m, names());
   const tn = [t1, t2];
   box.className = 'reco live';
   box.innerHTML = `
@@ -568,13 +625,26 @@ function renderPreview() {
     <ul class="ins">${pr.insights.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`;
 }
 
+// When editing an existing match, predict it only from the matches before it (same as its table row),
+// otherwise the preview would "know" this match's own result.
+let previewCache = { id: null, src: null, ctx: null };
+function previewContext() {
+  if (!form.editId) return R;
+  const idx = state.matches.findIndex(x => x.id === form.editId);
+  if (idx < 0) return R;
+  if (previewCache.id !== form.editId || previewCache.src !== state.matches) {
+    previewCache = { id: form.editId, src: state.matches, ctx: E.run(state.matches.slice(0, idx), names()) };
+  }
+  return previewCache.ctx;
+}
+
 function verdictNote(v) {
   const b = EV.buckets.find(x => x.lab === v);
   return b && b.n ? `<span class="mut">· past me "${v}" picks ${b.c}/${b.n} sahi rahe (${pct(b.c / b.n)})</span>` : '';
 }
 
 function resetForm() {
-  form = { preds: [null, null, null, null], editId: null };
+  form = emptyForm();
   $('#t1').value = ''; $('#t2').value = ''; $('#note').value = ''; $('#date').value = today();
   $('#formTitle').textContent = 'New Match';
   $('#btnAdd').textContent = 'Add Match';
@@ -582,22 +652,23 @@ function resetForm() {
   renderPickers();
 }
 
-function submitForm() {
+async function submitForm() {
   const t1 = $('#t1').value.trim(), t2 = $('#t2').value.trim();
   if (!t1 || !t2) return alert('Dono team ka naam daalo.');
   if (E.norm(t1) === E.norm(t2)) return alert('Dono team same nahi ho sakti.');
   if (form.preds.includes(null)) return alert('Charo experts ke liye team ya 💰 Paid select karo.');
   if (form.preds.every(p => p === 'P')) return alert('Kam se kam 1 expert ki prediction open honi chahiye.');
-  const data = { t1, t2, date: $('#date').value || today(), note: $('#note').value.trim(), preds: toEngine(form.preds) };
-  const old = form.editId && state.matches.find(x => x.id === form.editId);
+  const data = { t1, t2, date: $('#date').value || today(), note: $('#note').value.trim(),
+                 preds: toEngine(form.preds), revealed: form.revealed.slice() };
   let m;
-  if (old) {
-    m = { ...old, ...data };
-    // result is stored as a team index, so re-map it by name in case teams were renamed/swapped
-    if (E.isDone(old)) {
-      const winner = E.norm(old.result === 0 ? old.t1 : old.t2);
-      m.result = winner === E.norm(t1) ? 0 : winner === E.norm(t2) ? 1 : null;
-    }
+  if (form.editId) {
+    const old = state.matches.find(x => x.id === form.editId);
+    if (!old) { alert('Ye match server se delete ho chuka hai, edit save nahi hua.'); return resetForm(); }
+    // the match may have been settled while this edit form was open
+    if (old.result !== null && !(await requirePassword('Settled match edit karne ke liye'))) return;
+    const cur = state.matches.find(x => x.id === old.id); // re-read: data can change while the password box is open
+    if (!cur) { alert('Ye match server se delete ho chuka hai, edit save nahi hua.'); return resetForm(); }
+    m = E.mergeEdit(cur, data);
   } else {
     m = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), seq: Date.now(), result: null, ...data };
   }
@@ -608,7 +679,8 @@ function submitForm() {
 function editMatch(id) {
   const m = state.matches.find(x => x.id === id);
   if (!m) return;
-  form = { preds: toForm(m.preds), editId: id };
+  form = { preds: toForm(m.preds), revealed: (m.revealed || [null, null, null, null]).slice(),
+           editId: id, base: [E.norm(m.t1), E.norm(m.t2)] };
   $('#t1').value = m.t1; $('#t2').value = m.t2; $('#date').value = m.date || ''; $('#note').value = m.note || '';
   $('#formTitle').textContent = 'Edit Match';
   $('#btnAdd').textContent = 'Save Changes';
@@ -648,6 +720,7 @@ function renderKpis() {
 
 function renderTable() {
   const N = names();
+  if (Date.now() >= unlockedUntil) unlockedRows.clear(); // unlock window over → relock
   if (!booted) {
     $('#tbl').innerHTML = loadError
       ? `<tr><td class="empty" style="white-space:normal"><div class="e">⚠️</div><b class="no">${loadError.title}</b><div style="margin-top:8px">${loadError.hint}</div></td></tr>`
@@ -669,16 +742,24 @@ function renderTable() {
       <td class="mut idx">${idx + 1}</td>
       <td class="mut" data-label="#${idx + 1} · Date">${esc(m.date || '')}</td>
       <td class="match wide nolabel"><span><b>${esc(m.t1)}</b> <span class="mut">vs</span> <b>${esc(m.t2)}</b></span>${m.note ? `<div class="mut small">${esc(m.note)}</div>` : ''}</td>
-      ${m.preds.map((p, i) => `<td data-label="${esc(N[i])}"><span>${p === null ? '<span class="chip paid">💰 Paid</span>'
-        : `<span class="chip ${done ? (p === m.result ? 'ok' : 'no') : ''}">${esc(tn[p])}</span>`}</span></td>`).join('')}
+      ${m.preds.map((p, i) => {
+        const rv = m.revealed && m.revealed[i];
+        const cell = p !== null ? `<span class="chip ${done ? (p === m.result ? 'ok' : 'no') : ''}">${esc(tn[p])}</span>`
+          : rv === 0 || rv === 1 ? `<span class="chip paid">💰</span> <span class="chip ${done ? (rv === m.result ? 'ok' : 'no') : ''}">${esc(tn[rv])}</span>`
+          : '<span class="chip paid">💰 Paid</span>';
+        return `<td data-label="${esc(N[i])}"><span>${cell}</span></td>`;
+      }).join('')}
       <td data-label="Split"><span><b>${sp.key}</b>${sp.majTeam !== null ? ` <span class="mut small">→ ${esc(tn[sp.majTeam])}</span>` : ''}${sp.paid ? ` <span class="small" style="color:var(--warn)">· ${sp.paid} paid</span>` : ''}</span></td>
       <td data-label="System Pick" class="wide"><span><b>${esc(tn[pred.pick])}</b> <span class="mut small">${pct(pred.conf)}</span> <span class="pill ${pred.verdict}">${pred.verdict}</span></span></td>
-      <td data-label="Final Winner"><select data-res="${esc(m.id)}" style="min-width:150px">
-        <option value="" ${m.result === null ? 'selected' : ''}>— Winner select karo —</option>
+      <td data-label="Final Winner">${m.result !== null && !unlockedRows.has(m.id)
+        ? `<span><span class="locked ${m.result === 'NR' ? 'nr' : ''}">🔒 ${m.result === 'NR' ? '🚫 Abandoned' : esc(tn[m.result])}</span>
+           <button class="link" data-act="unlock" data-id="${esc(m.id)}">Change</button></span>`
+        : `<select data-res="${esc(m.id)}" style="min-width:150px">
+        <option value="" ${m.result === null ? 'selected' : ''}>${m.result === null ? '— Winner select karo —' : '⏳ Pending (result hatao)'}</option>
         <option value="0" ${m.result === 0 ? 'selected' : ''}>${esc(m.t1)}</option>
         <option value="1" ${m.result === 1 ? 'selected' : ''}>${esc(m.t2)}</option>
         <option value="NR" ${m.result === 'NR' ? 'selected' : ''}>🚫 Abandoned / No result</option>
-      </select></td>
+      </select>`}</td>
       <td data-label="Status">${mark}</td>
       <td class="acts wide nolabel">${m.result === null ? `<button class="link abdbtn" data-act="abd" data-id="${esc(m.id)}">🚫 Abandoned</button>` : ''}<button class="link" data-act="det" data-id="${esc(m.id)}">Why?</button><button class="link" data-act="edit" data-id="${esc(m.id)}">Edit</button><button class="link" data-act="del" data-id="${esc(m.id)}">🗑</button></td>
     </tr>
@@ -706,7 +787,8 @@ function renderExperts() {
     const l10 = e.hist.slice(-10), l10c = l10.reduce((a, b) => a + b, 0);
     const st = e.streak > 0 ? `<span class="ok">🔥 ${e.streak}W</span>` : e.streak < 0 ? `<span class="no">${-e.streak}L</span>` : '—';
     h += `<tr><td style="${ec(i)}"><span class="dot"></span><b>${esc(N[i])}</b></td><td>${frac(e.c, e.n)}</td><td>${frac(l10c, l10.length)}</td><td>${st}</td>
-      <td>${cf(e.cat.maj)}</td><td>${cf(e.cat.min)}</td><td>${cf(e.cat.tie)}</td><td>${cf(e.cat.solo)}</td><td>${e.paid || '—'}</td></tr>`;
+      <td>${cf(e.cat.maj)}</td><td>${cf(e.cat.min)}</td><td>${cf(e.cat.tie)}</td><td>${cf(e.cat.solo)}</td>
+      <td>${e.paid || '—'}${e.paidRev.n ? `<div class="small">revealed: ${frac(e.paidRev.c, e.paidRev.n)}</div>` : ''}</td></tr>`;
   });
   h += '</tbody></table>';
 
@@ -788,9 +870,16 @@ function renderChart() {
 
 /* ---------- events ---------- */
 $('#pickers').addEventListener('click', e => {
-  const b = e.target.closest('button[data-i]');
+  const b = e.target.closest('button[data-i], button[data-r]');
+  if (b && b.dataset.r !== undefined) {
+    const i = +b.dataset.r, v = +b.dataset.v;
+    form.revealed[i] = form.revealed[i] === v ? null : v; // click again to clear
+    return renderPickers();
+  }
   if (!b) return;
-  form.preds[+b.dataset.i] = b.dataset.v === 'P' ? 'P' : +b.dataset.v;
+  const i = +b.dataset.i;
+  form.preds[i] = b.dataset.v === 'P' ? 'P' : +b.dataset.v;
+  if (form.preds[i] !== 'P') form.revealed[i] = null;
   renderPickers();
 });
 $('#pickers').addEventListener('input', e => {
@@ -801,7 +890,9 @@ $('#pickers').addEventListener('input', e => {
   document.querySelector(`[data-av="${i}"]`).textContent = initial(inp.value || DEFAULT_NAMES[i]);
 });
 $('#pickers').addEventListener('change', e => {
-  if (!e.target.closest('input[data-name]')) return;
+  const inp = e.target.closest('input[data-name]');
+  if (!inp) return;
+  state.experts[+inp.dataset.name] = inp.value; // a server snapshot may have arrived mid-typing
   write(setDoc(userDoc(), { experts: state.experts.map(String) }, { merge: true }));
   renderAll(true);
 });
@@ -812,25 +903,78 @@ $('#pickers').addEventListener('keydown', e => {
 $('#btnAdd').addEventListener('click', submitForm);
 $('#btnCancel').addEventListener('click', resetForm);
 
+/* ---------- result lock ----------
+   A settled match (winner / abandoned) is locked. Changing it, or editing / deleting it,
+   needs the login password, re-checked by Firebase. One unlock lasts a few minutes. */
+const isSettled = id => { const m = state.matches.find(x => x.id === id); return !!m && m.result !== null; };
+
+function requirePassword(msg) {
+  if (Date.now() < unlockedUntil) return Promise.resolve(true);
+  const dlg = $('#pwDlg'), inp = $('#pwDlgIn'), err = $('#pwDlgErr'), ok = $('#pwDlgOk');
+  if (dlg.open) return Promise.resolve(false);
+  $('#pwDlgMsg').textContent = msg;
+  inp.value = ''; err.textContent = ''; ok.disabled = false;
+  dlg.showModal(); inp.focus();
+  return new Promise(resolve => {
+    const done = v => {
+      $('#pwDlgForm').onsubmit = $('#pwDlgCancel').onclick = dlg.oncancel = null;
+      if (dlg.open) dlg.close();
+      resolve(v);
+    };
+    $('#pwDlgCancel').onclick = () => done(false);
+    dlg.oncancel = e => { e.preventDefault(); done(false); };
+    $('#pwDlgForm').onsubmit = async e => {
+      e.preventDefault();
+      if (!inp.value) return;
+      ok.disabled = true; err.textContent = 'Checking…';
+      try {
+        await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, inp.value));
+        unlockedUntil = Date.now() + UNLOCK_MS;
+        done(true);
+      } catch (x) {
+        err.textContent = AUTH_ERRORS[x.code] || ('Fail: ' + (x.code || x.message));
+        ok.disabled = false; inp.select();
+      }
+    };
+  });
+}
+
 $('#tbl').addEventListener('change', e => {
   const sel = e.target.closest('select[data-res]');
   if (!sel) return;
+  const id = sel.dataset.res, m = state.matches.find(x => x.id === id);
+  if (!m) return;
   const result = sel.value === '' ? null : sel.value === 'NR' ? 'NR' : +sel.value;
-  write(updateDoc(matchDoc(sel.dataset.res), { result }));
+  const label = result === null ? 'Pending (result hatao)' : result === 'NR' ? 'ABANDONED' : [m.t1, m.t2][result];
+  if (!confirm(`${m.t1} vs ${m.t2}\nFinal: ${label}\n\nSave karein?${result !== null ? ' Save hone ke baad ye lock ho jayega.' : ''}`)) {
+    sel.value = m.result === null ? '' : String(m.result);
+    return;
+  }
+  unlockedRows.delete(id);
+  write(updateDoc(matchDoc(id), { result }));
 });
-$('#tbl').addEventListener('click', e => {
+$('#tbl').addEventListener('click', async e => {
   const b = e.target.closest('button[data-act]');
   if (!b) return;
-  const id = b.dataset.id;
-  if (b.dataset.act === 'det') {
+  const id = b.dataset.id, act = b.dataset.act;
+  if (act === 'det') {
     openDetails.has(id) ? openDetails.delete(id) : openDetails.add(id);
     document.querySelector(`tr[data-det="${CSS.escape(id)}"]`).hidden = !openDetails.has(id);
-  } else if (b.dataset.act === 'abd') {
-    if (confirm('Ye match ABANDONED mark karna hai? Ye settle ho jayega aur accuracy / learning me count nahi hoga.\n(Galti hui to Final Winner dropdown se badal sakte ho.)'))
+  } else if (act === 'abd') {
+    if (confirm('Ye match ABANDONED mark karna hai? Ye settle hoke lock ho jayega aur accuracy / learning me count nahi hoga.'))
       write(updateDoc(matchDoc(id), { result: 'NR' }));
-  } else if (b.dataset.act === 'edit') editMatch(id);
-  else if (b.dataset.act === 'del' && confirm('Ye match delete karna hai?')) {
+  } else if (act === 'unlock') {
+    if (!(await requirePassword('Final winner badalne ke liye'))) return;
+    unlockedRows.add(id);
+    renderTable();
+  } else if (act === 'edit') {
+    if (isSettled(id) && !(await requirePassword('Settled match edit karne ke liye'))) return;
+    editMatch(id);
+  } else if (act === 'del') {
+    if (isSettled(id) && !(await requirePassword('Settled match delete karne ke liye'))) return;
+    if (!confirm('Ye match delete karna hai?')) return;
     openDetails.delete(id);
+    unlockedRows.delete(id);
     if (form.editId === id) resetForm();
     write(deleteDoc(matchDoc(id)));
   }
@@ -854,9 +998,11 @@ $('#fileImport').addEventListener('change', async e => {
   try {
     s = JSON.parse(await f.text());
     const okMatch = m => m && m.id && m.t1 && m.t2 && Array.isArray(m.preds) && m.preds.length === 4 &&
-      m.preds.every(p => p === 0 || p === 1 || p === null) && m.preds.some(p => p !== null) && [null, 0, 1, 'NR'].includes(m.result);
+      m.preds.every(p => p === 0 || p === 1 || p === null) && m.preds.some(p => p !== null) && [null, 0, 1, 'NR'].includes(m.result) &&
+      (m.revealed === undefined || (Array.isArray(m.revealed) && m.revealed.length === 4 && m.revealed.every(p => p === 0 || p === 1 || p === null)));
     if (!Array.isArray(s.matches) || !Array.isArray(s.experts) || s.experts.length !== 4 || !s.matches.every(okMatch)) throw 0;
   } catch (err) { return alert('Invalid backup file.'); }
+  if (state.matches.some(m => m.result !== null) && !(await requirePassword('Restore se saare settled matches badal jayenge'))) return;
   if (!confirm(`${s.matches.length} matches server pe restore honge, current server data replace hoga. Continue?`)) return;
   resetForm();
   replaceAll(s.experts, s.matches);
@@ -866,13 +1012,14 @@ $('#btnCsv').addEventListener('click', () => {
   const lines = [['#', 'Date', 'Team 1', 'Team 2', 'Note', ...names(), 'Split', 'System Pick', 'Confidence', 'Level', 'Winner', 'System Correct'].map(q).join(',')];
   R.rows.forEach(({ m, pred }, i) => {
     const tn = [m.t1, m.t2], done = E.isDone(m);
-    lines.push([i + 1, m.date, m.t1, m.t2, m.note || '', ...m.preds.map(p => (p === null ? 'PAID' : tn[p])), E.splitOf(m.preds).key,
+    lines.push([i + 1, m.date, m.t1, m.t2, m.note || '', ...m.preds.map((p, i) => (p !== null ? tn[p] : m.revealed && m.revealed[i] !== null && m.revealed[i] !== undefined ? 'PAID → ' + tn[m.revealed[i]] : 'PAID')), E.splitOf(m.preds).key,
       tn[pred.pick], (pred.conf * 100).toFixed(1) + '%', pred.verdict,
       done ? tn[m.result] : m.result === 'NR' ? 'Abandoned' : '', done ? (pred.pick === m.result ? 'YES' : 'NO') : ''].map(q).join(','));
   });
   download(`cricket-predictor-${today()}.csv`, '﻿' + lines.join('\r\n'), 'text/csv');
 });
-$('#btnReset').addEventListener('click', () => {
+$('#btnReset').addEventListener('click', async () => {
+  if (state.matches.some(m => m.result !== null) && !(await requirePassword('Reset se saare settled matches delete honge'))) return;
   if (!confirm('Server se SAARE matches delete ho jayenge (expert names rahenge). Pehle Backup le lo. Pakka reset karna hai?')) return;
   resetForm();
   replaceAll(state.experts, []);
