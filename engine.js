@@ -1,22 +1,24 @@
 // Prediction engine: learns from completed matches and combines several
 // "mini models" whose weights adapt to how well each one has actually performed.
-// A prediction value is 0 (team 1), 1 (team 2) or null (paid / hidden).
-// m.preds    = what was known when the match was entered (drives the prediction + pattern stats)
+// Works for any number of experts (the app uses 10).
+// A prediction value is 0 (team 1), 1 (team 2), null (paid / hidden) or -1 (expert not tracked for that match).
+// m.preds    = what was known when the match was entered (drives the prediction + situation stats)
 // m.revealed = paid picks that became known only later (used only to learn expert records)
 (function (root) {
   'use strict';
 
   const ETA = 0.35;   // learning rate for model weights (higher = faster shift to winners)
   const SHARE = 0.02; // keeps every model alive so the mix can re-adapt when patterns change
+  const CAL_LR = 0.05, CAL_MIN = 0.3, CAL_MAX = 3; // online confidence calibration
 
   const MODELS = [
-    { id: 'maj',  name: 'Simple Majority',          desc: 'Open predictions me jis team ko zyada vote mile' },
-    { id: 'acc',  name: 'Expert Accuracy',          desc: 'Har open expert ke overall hit-rate se weighted vote' },
-    { id: 'role', name: 'Majority / Minority Role', desc: 'Expert majority, minority ya akela open — us situation me uska record' },
-    { id: 'pat',  name: 'Pattern Memory',           desc: 'Exact grouping (jaise A+B vs D, C paid) ka purana result' },
-    { id: 'form', name: 'Recent Form',              desc: 'Har expert ke last 8 matches ka form' },
-    { id: 'team', name: 'Team-specific',            desc: 'In dono teams ke matches me expert ka record' },
-    { id: 'h2h',  name: 'Head-to-Head',             desc: 'Jab do expert opposite hote hain tab kaun sahi nikalta hai' },
+    { id: 'maj',  name: 'Simple Majority' },
+    { id: 'acc',  name: 'Expert Accuracy' },
+    { id: 'role', name: 'Majority / Minority Role' },
+    { id: 'pat',  name: 'Pattern / Group Memory' },
+    { id: 'form', name: 'Recent Form' },
+    { id: 'team', name: 'Team-specific' },
+    { id: 'h2h',  name: 'Head-to-Head' },
   ];
 
   const BUCKETS = [
@@ -25,8 +27,6 @@
     { lab: 'LEAN',   min: 0.55 },
     { lab: 'RISKY',  min: 0 },
   ];
-
-  const SPLIT_ORDER = ['4-0', '3-1', '2-2', '3-0', '2-1', '2-0', '1-1', '1-0'];
 
   const cnt = () => ({ c: 0, n: 0 });
   const get = (o, k) => o[k] || (o[k] = cnt());
@@ -37,9 +37,23 @@
   const norm = s => String(s || '').trim().toLowerCase();
   const isDone = m => m.result === 0 || m.result === 1;
   const isOpen = p => p === 0 || p === 1;
+  const isPaid = p => p === null;
   const pc = x => Math.round(x * 100) + '%';
 
-  // Role of a visible expert among the visible votes.
+  // Pads/truncates a match to n experts; missing experts become -1 (not tracked).
+  function fit(m, n) {
+    const P = m.preds || [], V = m.revealed || [];
+    if (P.length === n && V.length === n) return m;
+    const preds = [], revealed = [];
+    for (let i = 0; i < n; i++) {
+      const p = P[i];
+      preds.push(isOpen(p) || isPaid(p) ? p : -1);
+      revealed.push(isPaid(p) && isOpen(V[i]) ? V[i] : null);
+    }
+    return { ...m, preds, revealed };
+  }
+
+  // Role of an open expert among the open votes.
   // key = exact situation ("3/4" = agrees with 2 others out of 4 open), cat = broad bucket.
   function roleOf(P, i) {
     const k = P.filter(isOpen).length, agree = P.filter(x => x === P[i]).length;
@@ -52,32 +66,39 @@
     return {
       key: Math.max(v0, v1) + '-' + Math.min(v0, v1),
       majTeam: v0 > v1 ? 0 : v1 > v0 ? 1 : null,
-      v0, v1, k: v0 + v1, paid: 4 - v0 - v1,
+      v0, v1, k: v0 + v1, paid: P.filter(isPaid).length,
     };
   }
 
-  // Grouping of experts, normalised so the first open expert is always on side "0"; "x" = paid.
+  // Split keys ordered: more open votes first, then more one-sided first.
+  function splitSort(keys) {
+    const parse = k => k.split('-').map(Number);
+    return keys.slice().sort((x, y) => {
+      const [a1, b1] = parse(x), [a2, b2] = parse(y);
+      return (a2 + b2) - (a1 + b1) || (a2 - b2) - (a1 - b1);
+    });
+  }
+
+  // Grouping of experts, normalised so the first open expert is always on side "0"; "x" = not open.
   function patternKey(P) {
     const f = P.find(isOpen);
     return P.map(x => (isOpen(x) ? String(x ^ f) : 'x')).join('');
   }
 
   function patternSides(key, names) {
-    const a = [], b = [], paid = [];
-    key.split('').forEach((ch, i) => (ch === '0' ? a : ch === '1' ? b : paid).push(names[i]));
-    return { a, b, paid };
+    const a = [], b = [], off = [];
+    key.split('').forEach((ch, i) => (ch === '0' ? a : ch === '1' ? b : off).push(names[i]));
+    return { a, b, off };
   }
 
   function patternLabel(key, names) {
-    const { a, b, paid } = patternSides(key, names);
-    let s = b.length ? a.join('+') + ' vs ' + b.join('+') : a.join('+') + (a.length > 1 ? ' (sab same)' : ' (akela open)');
-    if (paid.length) s += ' · paid: ' + paid.join('+');
-    return s;
+    const { a, b } = patternSides(key, names);
+    return b.length ? a.join('+') + ' vs ' + b.join('+') : a.join('+') + (a.length > 1 ? ' (sab same)' : ' (akela open)');
   }
 
   // Decision-time picks with later-revealed paid picks filled in.
   function fullPreds(m) {
-    return m.preds.map((p, i) => (isOpen(p) ? p : m.revealed && isOpen(m.revealed[i]) ? m.revealed[i] : null));
+    return m.preds.map((p, i) => (isOpen(p) ? p : isPaid(p) && m.revealed && isOpen(m.revealed[i]) ? m.revealed[i] : null));
   }
 
   // Applies an edit to a stored match. data.preds must already be in the new team order.
@@ -85,24 +106,24 @@
     const swapped = norm(data.t1) === norm(old.t2) && norm(data.t2) === norm(old.t1);
     const m = { ...old, ...data };
     if (swapped && isDone(old)) m.result = 1 - old.result;
-    m.revealed = data.preds.map((p, i) => (isOpen(p) ? null : data.revealed && isOpen(data.revealed[i]) ? data.revealed[i] : null));
+    m.revealed = data.preds.map((p, i) => (isPaid(p) && data.revealed && isOpen(data.revealed[i]) ? data.revealed[i] : null));
     return m;
   }
 
-  function newStats() {
-    const ex = [], pair = [];
-    for (let i = 0; i < 4; i++) {
-      ex.push({ c: 0, n: 0, paid: 0, paidRev: cnt(), hist: [], streak: 0, teams: {}, role: {}, cat: {} });
-      pair.push([cnt(), cnt(), cnt(), cnt()]);
-    }
-    return { n: 0, ex, pair, split: {}, pattern: {} };
+  const grid = n => Array.from({ length: n }, () => Array.from({ length: n }, cnt));
+
+  function newStats(n) {
+    const ex = [];
+    for (let i = 0; i < n; i++) ex.push({ c: 0, n: 0, paid: 0, paidRev: cnt(), hist: [], streak: 0, teams: {}, role: {}, cat: {} });
+    // pair[i][j]: i right when i and j disagreed; agree[i][j]: both right when they agreed
+    return { size: n, n: 0, ex, pair: grid(n), agree: grid(n), split: {}, pattern: {} };
   }
 
   function update(S, m) {
-    const P = m.preds, F = fullPreds(m), r = m.result;
+    const P = m.preds, F = fullPreds(m), r = m.result, n = S.size;
     F.forEach((p, i) => {
       const e = S.ex[i];
-      if (!isOpen(P[i])) e.paid++;
+      if (isPaid(P[i])) e.paid++;
       if (!isOpen(p)) return;
       const ok = p === r ? 1 : 0;
       e.c += ok; e.n++;
@@ -115,8 +136,10 @@
       const a = get(e.role, ro.key); a.c += ok; a.n++;
       const b = get(e.cat, ro.cat); b.c += ok; b.n++;
     });
-    for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) {
-      if (i !== j && isOpen(F[i]) && isOpen(F[j]) && F[i] !== F[j]) { S.pair[i][j].n++; if (F[i] === r) S.pair[i][j].c++; }
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+      if (i === j || !isOpen(F[i]) || !isOpen(F[j])) continue;
+      const cell = F[i] !== F[j] ? S.pair[i][j] : S.agree[i][j];
+      cell.n++; if (F[i] === r) cell.c++;
     }
     const sp = splitOf(P), s = get(S.split, sp.key);
     s.n++; if (sp.majTeam !== null && sp.majTeam === r) s.c++;
@@ -126,7 +149,7 @@
   }
 
   // Naive-Bayes style vote: each open expert pushes toward their pick by log-odds of their accuracy.
-  // Damped because experts are correlated, which plain NB would over-count.
+  // Damped because experts are rarely fully independent; final calibration fixes the rest.
   function nb(P, accs, damp) {
     let z = 0;
     P.forEach((p, i) => { if (isOpen(p)) z += (p === 0 ? 1 : -1) * logit(clamp(accs[i], 0.1, 0.9)); });
@@ -135,11 +158,11 @@
 
   // Every model returns P(team 1 wins).
   function modelProbs(S, m) {
-    const P = m.preds, out = {};
+    const P = m.preds, out = {}, n = S.size;
     const sp = splitOf(P);
     const overall = S.ex.map(e => rate(e.c, e.n, 0.5, 4));
 
-    out.maj = 0.5 + (sp.v0 - sp.v1) * 0.075;
+    out.maj = clamp(0.5 + 0.3 * (sp.v0 - sp.v1) / n, 0.05, 0.95);
 
     out.acc = nb(P, overall, 0.6);
 
@@ -150,15 +173,19 @@
       return rate(r.c, r.n, rate(c.c, c.n, overall[i], 3), 3);
     }), 0.6);
 
-    const first = P.find(isOpen);
-    let prior = 0.5;
-    if (sp.majTeam !== null) {
-      const s = S.split[sp.key] || cnt();
-      const majRate = rate(s.c, s.n, 0.5 + 0.25 * Math.abs(sp.v0 - sp.v1) / 4, 3);
-      prior = first === sp.majTeam ? majRate : 1 - majRate;
+    // Group memory: how often each agreeing pair was right together; the exact grouping's own
+    // history (when it has repeated) refines that.
+    let za = 0, ka = 0;
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+      if (!isOpen(P[i]) || P[i] !== P[j]) continue;
+      const g = S.agree[i][j];
+      za += (P[i] === 0 ? 1 : -1) * logit(clamp(rate(g.c, g.n, (overall[i] + overall[j]) / 2, 3), 0.1, 0.9));
+      ka++;
     }
+    const group = ka ? sig((za / ka) * 1.5) : out.acc;
+    const first = P.find(isOpen);
     const pt = S.pattern[patternKey(P)] || cnt();
-    const side0 = rate(pt.c, pt.n, prior, 3);
+    const side0 = rate(pt.c, pt.n, first === 0 ? group : 1 - group, 3);
     out.pat = first === 0 ? side0 : 1 - side0;
 
     out.form = nb(P, S.ex.map((e, i) => {
@@ -173,7 +200,7 @@
     }), 0.6);
 
     let z = 0, k = 0;
-    for (let i = 0; i < 4; i++) for (let j = i + 1; j < 4; j++) {
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
       if (!isOpen(P[i]) || !isOpen(P[j]) || P[i] === P[j]) continue;
       const pr = S.pair[i][j];
       z += (P[i] === 0 ? 1 : -1) * logit(clamp(rate(pr.c, pr.n, 0.5, 2), 0.1, 0.9));
@@ -192,9 +219,13 @@
     return w;
   }
 
-  function finalize(p, probs, w, m, S) {
+  const mix = (probs, w) => MODELS.reduce((p, md) => p + w[md.id] * probs[md.id], 0);
+  // Scales confidence (never flips the pick): cal > 1 sharpens, < 1 softens.
+  const calibrate = (pRaw, cal) => sig(cal * logit(clamp(pRaw, 1e-4, 1 - 1e-4)));
+
+  function finalize(pRaw, cal, probs, w, m, S) {
     let pick;
-    if (Math.abs(p - 0.5) > 1e-9) pick = p > 0.5 ? 0 : 1;
+    if (Math.abs(pRaw - 0.5) > 1e-9) pick = pRaw > 0.5 ? 0 : 1;
     else {
       const sp = splitOf(m.preds);
       if (sp.majTeam !== null) pick = sp.majTeam;
@@ -206,9 +237,10 @@
         pick = m.preds[best];
       }
     }
+    const p = calibrate(pRaw, cal);
     const conf = Math.max(p, 1 - p);
     const verdict = BUCKETS.find(b => conf >= b.min).lab;
-    return { p, pick, conf, verdict, probs, w: { ...w }, n: S.n };
+    return { p, pRaw, pick, conf, verdict, probs, w: { ...w }, n: S.n };
   }
 
   function insights(S, m, names, pick) {
@@ -216,7 +248,7 @@
     const recOf = r => (r && r.n ? `${r.c}/${r.n} sahi (${pc(r.c / r.n)})` : 'abhi tak koi record nahi');
 
     const sp = splitOf(P);
-    const paidNames = names.filter((_, i) => !isOpen(P[i]));
+    const paidNames = names.filter((_, i) => isPaid(P[i]));
     if (paidNames.length) out.push(`💰 Paid: ${paidNames.join(', ')} — system sirf ${sp.k} open prediction se decide kar raha hai.`);
 
     if (sp.k === 1) {
@@ -231,21 +263,25 @@
     }
 
     const key = patternKey(P), pt = S.pattern[key];
-    if (sp.k > 1) {
-      const lbl = patternLabel(key, names);
+    if (sp.k > 1 && pt && pt.n) {
       const f = P.find(isOpen);
       const side0 = names.filter((_, i) => P[i] === f).join('+');
-      out.push(pt && pt.n
-        ? `Pattern "${lbl}" pehle ${pt.n} baar aaya — ${side0} side ${pt.c}/${pt.n} baar sahi (${pc(pt.c / pt.n)}).`
-        : `Pattern "${lbl}" pehli baar aaya hai.`);
+      out.push(`Ye exact grouping pehle ${pt.n} baar aayi — ${side0} side ${pt.c}/${pt.n} baar sahi (${pc(pt.c / pt.n)}).`);
     }
+
+    // strongest agreeing pair with enough history
+    let bestPair = null;
+    for (let i = 0; i < P.length; i++) for (let j = i + 1; j < P.length; j++) {
+      if (!isOpen(P[i]) || P[i] !== P[j]) continue;
+      const g = S.agree[i][j];
+      if (g.n >= 5 && (!bestPair || g.c / g.n > bestPair.r)) bestPair = { i, j, r: g.c / g.n, g };
+    }
+    if (bestPair) out.push(`${names[bestPair.i]} + ${names[bestPair.j]} (${tn[P[bestPair.i]]}) — jab ye dono saath hote hain: ${recOf(bestPair.g)}.`);
 
     P.forEach((p, i) => {
       if (!isOpen(p)) return;
       const e = S.ex[i], ro = roleOf(P, i);
-      if (ro.cat === 'min') {
-        out.push(`${names[i]} ${ro.agree === 1 ? 'akela opposite' : 'minority me'} (${tn[p]}) — minority me hote hue ${recOf(e.cat.min)}.`);
-      }
+      if (ro.cat === 'min' && ro.agree === 1) out.push(`${names[i]} akela opposite (${tn[p]}) — minority me hote hue ${recOf(e.cat.min)}.`);
       if (e.streak >= 3) out.push(`🔥 ${names[i]} lagatar ${e.streak} match se sahi.`);
       if (e.streak <= -3) out.push(`❄️ ${names[i]} lagatar ${-e.streak} match se galat.`);
     });
@@ -261,15 +297,15 @@
   // Walk-forward: every match is predicted using ONLY the matches before it,
   // so the accuracy shown for past matches is honest, not hindsight.
   function run(matches, names) {
-    const S = newStats(), lw = {};
+    const n = names.length, S = newStats(n), lw = {};
+    let cal = 1;
     MODELS.forEach(md => { lw[md.id] = 0; });
     const rows = [];
-    for (const m of matches) {
+    for (const raw of matches) {
+      const m = fit(raw, n);
       if (!m.preds.some(isOpen)) continue; // nothing to predict from
       const probs = modelProbs(S, m), w = weightsFrom(lw);
-      let p = 0;
-      MODELS.forEach(md => { p += w[md.id] * probs[md.id]; });
-      const pred = finalize(p, probs, w, m, S);
+      const pred = finalize(mix(probs, w), cal, probs, w, m, S);
       pred.insights = insights(S, m, names, pred.pick);
       rows.push({ m, pred });
       if (isDone(m)) {
@@ -279,17 +315,18 @@
         });
         const nw = weightsFrom(lw);
         MODELS.forEach(md => { lw[md.id] = Math.log((1 - SHARE) * nw[md.id] + SHARE / MODELS.length); });
+        const y = m.result === 0 ? 1 : 0;
+        cal = clamp(cal - CAL_LR * (pred.p - y) * logit(clamp(pred.pRaw, 1e-4, 1 - 1e-4)), CAL_MIN, CAL_MAX);
         update(S, m);
       }
     }
-    return { rows, S, w: weightsFrom(lw) };
+    return { rows, S, w: weightsFrom(lw), cal, size: n };
   }
 
-  function predictWith(R, m, names) {
+  function predictWith(R, raw, names) {
+    const m = fit(raw, R.size);
     const probs = modelProbs(R.S, m);
-    let p = 0;
-    MODELS.forEach(md => { p += R.w[md.id] * probs[md.id]; });
-    const pred = finalize(p, probs, R.w, m, R.S);
+    const pred = finalize(mix(probs, R.w), R.cal, probs, R.w, m, R.S);
     pred.insights = insights(R.S, m, names, pred.pick);
     return pred;
   }
@@ -324,8 +361,8 @@
     return ev;
   }
 
-  const api = { MODELS, BUCKETS, SPLIT_ORDER, run, predictWith, evaluate, roleOf, splitOf,
-                patternKey, patternLabel, patternSides, isDone, isOpen, norm, fullPreds, mergeEdit };
+  const api = { MODELS, BUCKETS, run, predictWith, evaluate, roleOf, splitOf, splitSort, fit,
+                patternKey, patternLabel, patternSides, isDone, isOpen, isPaid, norm, fullPreds, mergeEdit };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Engine = api;
 })(this);

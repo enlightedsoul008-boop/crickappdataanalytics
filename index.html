@@ -9,7 +9,8 @@
     --bg: #0b0f17; --panel: #131925; --panel2: #1a2232; --panel3: #222c40; --line: #263048;
     --text: #e9edf5; --mut: #8a94aa; --acc: #4f8cff; --acc2: #7b5cff;
     --good: #2fbf71; --bad: #ef5350; --warn: #f5a524;
-    --e0: #4f8cff; --e1: #b26bff; --e2: #22c3a6; --e3: #ff8a4c;
+    --e0: #4f8cff; --e1: #b26bff; --e2: #22c3a6; --e3: #ff8a4c; --e4: #ff5d8f;
+    --e5: #e3c84a; --e6: #6fd47e; --e7: #4cc9f0; --e8: #a3a8ff; --e9: #c9a27e;
     --radius: 14px;
   }
   * { box-sizing: border-box; }
@@ -213,7 +214,7 @@
 <div class="lock">
   <div class="lockbox">
     <div class="logo">🏏</div>
-    <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v11</span></h1>
+    <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v13</span></h1>
     <div class="mut small" id="lockSub">Connecting…</div>
     <form id="loginForm" autocomplete="on" hidden>
       <div class="field"><label for="email">Email</label><input id="email" type="email" autocomplete="username" placeholder="you@gmail.com" required></div>
@@ -250,7 +251,7 @@
     <div class="brand">
       <div class="logo">🏏</div>
       <div>
-        <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v11</span></h1>
+        <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v13</span></h1>
         <div class="small"><span class="sync" id="sync">Connecting</span> <span class="mut sub" id="who"></span></div>
       </div>
     </div>
@@ -298,14 +299,15 @@
     <div class="card"><h2><span class="ic">👤</span>Expert Report</h2><div class="tw" id="expertTbl"></div></div>
     <div class="card"><h2><span class="ic">📈</span>Accuracy Over Time</h2><div id="chart"></div></div>
     <div class="card"><h2><span class="ic">⚖️</span>Majority vs Minority</h2><div class="tw" id="splitTbl"></div></div>
-    <div class="card"><h2><span class="ic">🧩</span>Pattern Memory</h2><div class="tw" id="patTbl"></div></div>
+    <div class="card"><h2><span class="ic">🧩</span>Group Memory</h2><div class="tw" id="patTbl"></div></div>
     <div class="card"><h2><span class="ic">🎯</span>Confidence vs Actual Accuracy</h2><div class="tw" id="bucketTbl"></div></div>
     <div class="card"><h2><span class="ic">🧠</span>Internal Models</h2><div class="tw" id="modelTbl"></div></div>
   </section>
 </main>
 
-<script src="engine.js"></script>
-<script src="firebase-config.js"></script>
+<!-- ?v= forces browsers / GitHub Pages cache to fetch the matching engine for this page version -->
+<script src="engine.js?v=13"></script>
+<script src="firebase-config.js?v=13"></script>
 <script>
   // If the Firebase module never starts (no internet, or opened as a local file), say so instead of hanging.
   setTimeout(() => {
@@ -327,19 +329,30 @@ import { getFirestore, collection, doc, onSnapshot, setDoc, updateDoc, deleteDoc
 
 window.__appStarted = true;
 const E = window.Engine;
+if (!E || typeof E.fit !== 'function' || typeof E.splitSort !== 'function') {
+  document.getElementById('lockSub').textContent = 'engine.js purani version hai';
+  const n = document.getElementById('notice');
+  n.hidden = false;
+  n.innerHTML = '<b>engine.js aur index.html ka version match nahi kar raha.</b> GitHub pe dono files ka naya version upload karo, fir <b>Ctrl+Shift+R</b> dabao. Aapka data server pe safe hai.';
+  throw new Error('engine.js version mismatch');
+}
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const pct = x => (isFinite(x) ? (x * 100).toFixed(1) + '%' : '—');
 const frac = (c, n) => (n ? `${pct(c / n)} <span class="mut small">(${+c.toFixed(1)}/${n})</span>` : '<span class="mut">—</span>');
 const today = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
-const DEFAULT_NAMES = ['A', 'B', 'C', 'D'];
+const N_EXP = 10;
+const DEFAULT_NAMES = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'];
+const blank = v => Array(N_EXP).fill(v);
+// older data had 4 experts: pad names, and mark the newer experts as "not tracked" (-1) in old matches
+const fitExperts = ex => DEFAULT_NAMES.map((d, i) => (Array.isArray(ex) && typeof ex[i] === 'string' ? ex[i] : d));
 const OLD_LOCAL_KEY = 'cricExpertPredictor.v1';
 const ec = i => `--ec:var(--e${i})`;
 const initial = s => (String(s).trim()[0] || '?').toUpperCase();
 
 let state = { experts: DEFAULT_NAMES.slice(), matches: [] };
 let R, EV;
-const emptyForm = () => ({ preds: [null, null, null, null], revealed: [null, null, null, null], editId: null, base: null });
+const emptyForm = () => ({ preds: blank(null), revealed: blank(null), editId: null, base: null });
 let form = emptyForm();
 const openDetails = new Set();
 const UNLOCK_MS = 5 * 60 * 1000;
@@ -371,12 +384,14 @@ const matchesCol = () => collection(db, 'users', user.uid, 'matches');
 const clean = (m, seq) => ({
   id: String(m.id), seq: seq !== undefined ? seq : (m.seq || Date.now()),
   t1: String(m.t1), t2: String(m.t2), date: m.date || '', note: m.note || '',
-  preds: m.preds.map(p => (p === null || p === undefined ? null : Number(p))), result: m.result === undefined ? null : m.result,
-  revealed: m.preds.map((p, i) => (p === null && m.revealed && (m.revealed[i] === 0 || m.revealed[i] === 1) ? m.revealed[i] : null)),
+  preds: m.preds.map(p => (E.isOpen(p) || p === -1 ? p : null)), result: m.result === undefined ? null : m.result,
+  revealed: m.preds.map((p, i) => (p === null && m.revealed && E.isOpen(m.revealed[i]) ? m.revealed[i] : null)),
 });
-// form keeps 'P' for paid (null there means "not chosen yet"); stored/engine form uses null for paid
-const toEngine = preds => preds.map(p => (p === 'P' ? null : p));
-const toForm = preds => preds.map(p => (p === null ? 'P' : p));
+// form keeps 'P' for paid and 'X' for not-tracked (null there means "not chosen yet");
+// stored/engine form uses null for paid and -1 for not-tracked
+const toEngine = preds => preds.map(p => (p === 'P' ? null : p === 'X' ? -1 : p));
+const toForm = preds => preds.map(p => (p === null ? 'P' : p === -1 ? 'X' : p));
+const noneOpen = preds => preds.every(p => p === 'P' || p === 'X');
 
 function setSync(kind, text) {
   const el = $('#sync');
@@ -398,7 +413,7 @@ async function write(promise) {
 let loadError = null, loadTimer = null;
 function showLoadError(title, hint) {
   loadError = { title, hint };
-  if (!booted && R) renderTable();
+  if (!booted) renderTable();
 }
 function onSyncError(e) {
   console.error(e);
@@ -432,12 +447,12 @@ function startSync() {
   }, 15000);
   unsubs.push(onSnapshot(userDoc(), snap => {
     const ex = snap.exists() ? snap.data().experts : null;
-    if (Array.isArray(ex) && ex.length === 4) state.experts = ex.map(String);
+    if (Array.isArray(ex)) state.experts = fitExperts(ex);
     gotExperts = true; dataChanged();
   }, onSyncError));
   unsubs.push(onSnapshot(matchesCol(), { includeMetadataChanges: true }, snap => {
     // learning order = match date, then entry order (so back-filled old matches land in the right place)
-    state.matches = snap.docs.map(d => d.data()).sort((a, b) =>
+    state.matches = snap.docs.map(d => E.fit(d.data(), N_EXP)).sort((a, b) =>
       String(a.date || '').localeCompare(String(b.date || '')) || ((a.seq || 0) - (b.seq || 0)) || (a.id < b.id ? -1 : 1));
     gotMatches = true;
     if (!pending) setSync(snap.metadata.fromCache ? 'busy' : 'ok', snap.metadata.fromCache ? 'Offline' : 'Synced');
@@ -458,7 +473,17 @@ function dataChanged() {
   const first = !booted;
   booted = true; // must be set before rendering, or the table keeps showing "loading"
   clearTimeout(loadTimer); loadError = null;
-  renderAll(!first && typingName);
+  try {
+    renderAll(!first && typingName);
+  } catch (e) {
+    // never fail silently: an empty table must not look like lost data
+    console.error(e);
+    booted = false;
+    setSync('err', 'Display error');
+    showLoadError('Data server pe hai, lekin dikhane me error aaya',
+      `${state.matches.length} matches server se mile. Error: <code>${esc(e.message || String(e))}</code><br>Is message ka screenshot bhejo.`);
+    return;
+  }
   if (first) offerLocalMigration();
 }
 
@@ -482,8 +507,8 @@ function offerLocalMigration() {
 async function replaceAll(experts, matches) {
   const keep = new Set(matches.map(m => String(m.id)));
   const ops = state.matches.filter(m => !keep.has(m.id)).map(m => b => b.delete(matchDoc(m.id)));
-  matches.forEach((m, i) => ops.push(b => b.set(matchDoc(String(m.id)), clean(m, i + 1))));
-  ops.push(b => b.set(userDoc(), { experts: experts.map(String) }, { merge: true }));
+  matches.forEach((m, i) => ops.push(b => b.set(matchDoc(String(m.id)), clean(E.fit(m, N_EXP), i + 1))));
+  ops.push(b => b.set(userDoc(), { experts: fitExperts(experts) }, { merge: true }));
   const run = async () => {
     for (let i = 0; i < ops.length; i += 400) {
       const batch = writeBatch(db);
@@ -558,7 +583,7 @@ function renderPickers() {
         <div class="avatar" data-av="${i}">${esc(initial(e || DEFAULT_NAMES[i]))}</div>
         <div class="pname">
           <input data-name="${i}" value="${esc(e)}" placeholder="Expert ka naam likho" maxlength="30">
-          <div class="mut small">Expert ${i + 1}</div>
+          <div class="mut small">Expert ${i + 1}${form.preds[i] === 'X' ? ' · is match me tracked nahi tha' : ''}</div>
         </div>
       </div>
       <div class="seg">
@@ -607,7 +632,7 @@ function renderPreview() {
       <div class="mut" style="margin-top:6px">${!t1 || !t2 ? 'Dono teams ke naam daalo' : `${left} expert baaki`}</div>`;
     return;
   }
-  if (form.preds.every(p => p === 'P')) {
+  if (noneOpen(form.preds)) {
     box.className = 'reco';
     box.innerHTML = `<div class="lbl">System Recommendation</div>
       <div class="no" style="margin-top:6px">Kam se kam 1 prediction open chahiye</div>`;
@@ -656,8 +681,8 @@ async function submitForm() {
   const t1 = $('#t1').value.trim(), t2 = $('#t2').value.trim();
   if (!t1 || !t2) return alert('Dono team ka naam daalo.');
   if (E.norm(t1) === E.norm(t2)) return alert('Dono team same nahi ho sakti.');
-  if (form.preds.includes(null)) return alert('Charo experts ke liye team ya 💰 Paid select karo.');
-  if (form.preds.every(p => p === 'P')) return alert('Kam se kam 1 expert ki prediction open honi chahiye.');
+  if (form.preds.includes(null)) return alert('Sabhi experts ke liye team ya 💰 Paid select karo.');
+  if (noneOpen(form.preds)) return alert('Kam se kam 1 expert ki prediction open honi chahiye.');
   const data = { t1, t2, date: $('#date').value || today(), note: $('#note').value.trim(),
                  preds: toEngine(form.preds), revealed: form.revealed.slice() };
   let m;
@@ -679,7 +704,7 @@ async function submitForm() {
 function editMatch(id) {
   const m = state.matches.find(x => x.id === id);
   if (!m) return;
-  form = { preds: toForm(m.preds), revealed: (m.revealed || [null, null, null, null]).slice(),
+  form = { preds: toForm(m.preds), revealed: (m.revealed || blank(null)).slice(),
            editId: id, base: [E.norm(m.t1), E.norm(m.t2)] };
   $('#t1').value = m.t1; $('#t2').value = m.t2; $('#date').value = m.date || ''; $('#note').value = m.note || '';
   $('#formTitle').textContent = 'Edit Match';
@@ -744,7 +769,8 @@ function renderTable() {
       <td class="match wide nolabel"><span><b>${esc(m.t1)}</b> <span class="mut">vs</span> <b>${esc(m.t2)}</b></span>${m.note ? `<div class="mut small">${esc(m.note)}</div>` : ''}</td>
       ${m.preds.map((p, i) => {
         const rv = m.revealed && m.revealed[i];
-        const cell = p !== null ? `<span class="chip ${done ? (p === m.result ? 'ok' : 'no') : ''}">${esc(tn[p])}</span>`
+        const cell = p === -1 ? '<span class="mut">—</span>'
+          : p !== null ? `<span class="chip ${done ? (p === m.result ? 'ok' : 'no') : ''}">${esc(tn[p])}</span>`
           : rv === 0 || rv === 1 ? `<span class="chip paid">💰</span> <span class="chip ${done ? (rv === m.result ? 'ok' : 'no') : ''}">${esc(tn[rv])}</span>`
           : '<span class="chip paid">💰 Paid</span>';
         return `<td data-label="${esc(N[i])}"><span>${cell}</span></td>`;
@@ -794,9 +820,9 @@ function renderExperts() {
 
   h += '<h2 style="margin-top:20px;font-size:14px">Head-to-Head</h2><table><thead><tr><th></th>' +
     N.map(x => `<th>vs ${esc(x)}</th>`).join('') + '</tr></thead><tbody>';
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < N_EXP; i++) {
     h += `<tr><td style="${ec(i)}"><span class="dot"></span><b>${esc(N[i])}</b></td>`;
-    for (let j = 0; j < 4; j++) h += i === j ? '<td class="mut">—</td>' : `<td>${frac(S.pair[i][j].c, S.pair[i][j].n)}</td>`;
+    for (let j = 0; j < N_EXP; j++) h += i === j ? '<td class="mut">—</td>' : `<td>${frac(S.pair[i][j].c, S.pair[i][j].n)}</td>`;
     h += '</tr>';
   }
   $('#expertTbl').innerHTML = h + '</tbody></table>';
@@ -804,12 +830,12 @@ function renderExperts() {
 
 function renderSplit() {
   const S = R.S;
-  const keys = E.SPLIT_ORDER.filter((k, i) => i < 3 || S.split[k]);
+  const keys = E.splitSort(Object.keys(S.split));
+  if (!keys.length) { $('#splitTbl').innerHTML = '<div class="empty">Abhi data nahi</div>'; return; }
   const rows = keys.map(k => {
-    const s = S.split[k] || { c: 0, n: 0 }, sys = EV.bySplit[k] || { c: 0, n: 0 };
-    const [a, b] = k.split('-').map(Number), open = a + b, tie = a === b;
-    const label = k === '1-0' ? 'sirf 1 open → wo sahi' : '';
-    return `<tr><td><b>${k}</b>${open < 4 ? ` <span class="small" style="color:var(--warn)">${4 - open} paid</span>` : ''}${label ? `<div class="mut small">${label}</div>` : ''}</td><td>${s.n}</td>
+    const s = S.split[k], sys = EV.bySplit[k] || { c: 0, n: 0 };
+    const [a, b] = k.split('-').map(Number), tie = a === b;
+    return `<tr><td><b>${k}</b> <span class="mut small">${a + b}/${N_EXP} open</span></td><td>${s.n}</td>
       <td>${tie ? '<span class="mut">n/a</span>' : frac(s.c, s.n)}</td>
       <td>${tie ? '<span class="mut">n/a</span>' : frac(s.n - s.c, s.n)}</td>
       <td>${frac(sys.c, sys.n)}</td></tr>`;
@@ -818,18 +844,18 @@ function renderSplit() {
 }
 
 function renderPatterns() {
-  const entries = Object.entries(R.S.pattern).sort((a, b) => b[1].n - a[1].n);
-  if (!entries.length) { $('#patTbl').innerHTML = '<div class="empty">Abhi data nahi</div>'; return; }
-  const rows = entries.map(([key, v]) => {
-    const lbl = E.patternLabel(key, names());
-    const { a, b } = E.patternSides(key, names());
-    const s1 = a.join('+'), s2 = b.join('+');
-    const r = v.c / v.n;
-    const follow = r > 0.5 ? s1 : r < 0.5 ? (s2 || `${s1} ka opposite`) : 'koi edge nahi';
-    return `<tr><td>${esc(lbl)}</td><td>${v.n}</td><td>${frac(v.c, v.n)}</td>
-      <td>${s2 ? frac(v.n - v.c, v.n) : '<span class="mut">—</span>'}</td><td><b>${esc(follow)}</b></td></tr>`;
-  }).join('');
-  $('#patTbl').innerHTML = `<table><thead><tr><th>Pattern</th><th>Times</th><th>Left side sahi</th><th>Right side sahi</th><th>Follow</th></tr></thead><tbody>${rows}</tbody></table>`;
+  // with 10 experts exact groupings rarely repeat, so show which pairs are strongest when they agree
+  const N = names(), S = R.S, pairs = [];
+  for (let i = 0; i < N_EXP; i++) for (let j = i + 1; j < N_EXP; j++) {
+    const g = S.agree[i][j];
+    if (g.n >= 3) pairs.push({ i, j, g, r: (g.c + 1) / (g.n + 2) });
+  }
+  if (!pairs.length) { $('#patTbl').innerHTML = '<div class="empty">Abhi data nahi</div>'; return; }
+  pairs.sort((x, y) => y.r - x.r || y.g.n - x.g.n);
+  const show = pairs.length > 16 ? pairs.slice(0, 8).concat(pairs.slice(-8)) : pairs;
+  const rows = show.map(({ i, j, g }) => `<tr><td style="${ec(i)}"><span class="dot"></span>${esc(N[i])} <span class="mut">+</span>
+    <span style="${ec(j)}"><span class="dot"></span>${esc(N[j])}</span></td><td>${g.n}</td><td>${frac(g.c, g.n)}</td></tr>`).join('');
+  $('#patTbl').innerHTML = `<table><thead><tr><th>Jab ye dono saath hon</th><th>Times</th><th>Sahi</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 function renderBuckets() {
@@ -997,10 +1023,11 @@ $('#fileImport').addEventListener('change', async e => {
   let s;
   try {
     s = JSON.parse(await f.text());
-    const okMatch = m => m && m.id && m.t1 && m.t2 && Array.isArray(m.preds) && m.preds.length === 4 &&
-      m.preds.every(p => p === 0 || p === 1 || p === null) && m.preds.some(p => p !== null) && [null, 0, 1, 'NR'].includes(m.result) &&
-      (m.revealed === undefined || (Array.isArray(m.revealed) && m.revealed.length === 4 && m.revealed.every(p => p === 0 || p === 1 || p === null)));
-    if (!Array.isArray(s.matches) || !Array.isArray(s.experts) || s.experts.length !== 4 || !s.matches.every(okMatch)) throw 0;
+    const okPick = p => p === 0 || p === 1 || p === null || p === -1;
+    const okMatch = m => m && m.id && m.t1 && m.t2 && Array.isArray(m.preds) && m.preds.length >= 1 && m.preds.length <= N_EXP &&
+      m.preds.every(okPick) && m.preds.some(E.isOpen) && [null, 0, 1, 'NR'].includes(m.result) &&
+      (m.revealed === undefined || (Array.isArray(m.revealed) && m.revealed.length <= N_EXP && m.revealed.every(okPick)));
+    if (!Array.isArray(s.matches) || !Array.isArray(s.experts) || !s.experts.length || s.experts.length > N_EXP || !s.matches.every(okMatch)) throw 0;
   } catch (err) { return alert('Invalid backup file.'); }
   if (state.matches.some(m => m.result !== null) && !(await requirePassword('Restore se saare settled matches badal jayenge'))) return;
   if (!confirm(`${s.matches.length} matches server pe restore honge, current server data replace hoga. Continue?`)) return;
@@ -1012,7 +1039,7 @@ $('#btnCsv').addEventListener('click', () => {
   const lines = [['#', 'Date', 'Team 1', 'Team 2', 'Note', ...names(), 'Split', 'System Pick', 'Confidence', 'Level', 'Winner', 'System Correct'].map(q).join(',')];
   R.rows.forEach(({ m, pred }, i) => {
     const tn = [m.t1, m.t2], done = E.isDone(m);
-    lines.push([i + 1, m.date, m.t1, m.t2, m.note || '', ...m.preds.map((p, i) => (p !== null ? tn[p] : m.revealed && m.revealed[i] !== null && m.revealed[i] !== undefined ? 'PAID → ' + tn[m.revealed[i]] : 'PAID')), E.splitOf(m.preds).key,
+    lines.push([i + 1, m.date, m.t1, m.t2, m.note || '', ...m.preds.map((p, i) => (p === -1 ? '' : p !== null ? tn[p] : E.isOpen(m.revealed[i]) ? 'PAID → ' + tn[m.revealed[i]] : 'PAID')), E.splitOf(m.preds).key,
       tn[pred.pick], (pred.conf * 100).toFixed(1) + '%', pred.verdict,
       done ? tn[m.result] : m.result === 'NR' ? 'Abandoned' : '', done ? (pred.pick === m.result ? 'YES' : 'NO') : ''].map(q).join(','));
   });
