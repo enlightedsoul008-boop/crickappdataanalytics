@@ -158,6 +158,17 @@
   dialog#pwDlg form { display: flex; flex-direction: column; gap: 12px; }
   dialog#pwDlg input { font-size: 16px; }
   dialog#pwDlg .btns { display: flex; gap: 10px; justify-content: flex-end; }
+  dialog#expDlg { width: min(520px, calc(100vw - 24px)); max-height: calc(100vh - 40px); background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 16px; padding: 20px; box-shadow: 0 20px 60px rgba(0,0,0,.5); }
+  dialog#expDlg::backdrop { background: rgba(0,0,0,.6); backdrop-filter: blur(3px); }
+  dialog#expDlg h3 { margin: 0 0 4px; font-size: 17px; }
+  .exprow { display: grid; grid-template-columns: auto 1fr auto auto; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .exprow .avatar { width: 30px; height: 30px; font-size: 13px; }
+  .exprow input { padding: 7px 10px; }
+  .exprow.off { opacity: .5; }
+  .exprow .stat { font-size: 12px; color: var(--mut); white-space: nowrap; }
+  #expAddForm { display: flex; gap: 8px; margin-top: 14px; }
+  #expDlg .btns { display: flex; justify-content: flex-end; margin-top: 14px; }
+  @media (max-width: 480px) { .exprow { grid-template-columns: auto 1fr auto; } .exprow .stat { display: none; } }
   .lockbox .primary { width: 100%; }
   .notice { text-align: left; margin-top: 18px; padding: 14px; border-radius: 12px; background: var(--panel2); border: 1px solid var(--line); font-size: 13px; }
   .notice ol { margin: 8px 0 0; padding-left: 18px; } .notice li { margin: 3px 0; }
@@ -187,7 +198,7 @@
     .brand .sub { display: none; }
     .logo { width: 36px; height: 36px; font-size: 18px; }
     h1 { font-size: 16px; }
-    .actions { width: 100%; display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+    .actions { width: 100%; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
     .actions button { padding: 7px 4px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     header { position: static; }
 
@@ -214,7 +225,7 @@
 <div class="lock">
   <div class="lockbox">
     <div class="logo">🏏</div>
-    <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v13</span></h1>
+    <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v14</span></h1>
     <div class="mut small" id="lockSub">Connecting…</div>
     <form id="loginForm" autocomplete="on" hidden>
       <div class="field"><label for="email">Email</label><input id="email" type="email" autocomplete="username" placeholder="you@gmail.com" required></div>
@@ -246,16 +257,27 @@
     </div>
   </form>
 </dialog>
+<dialog id="expDlg">
+  <h3>👥 Experts</h3>
+  <div class="mut small">Remove karne pe purana record safe rehta hai. Kabhi bhi wapas la sakte ho.</div>
+  <div id="expList"></div>
+  <form id="expAddForm">
+    <input id="expNew" placeholder="Naye expert ka naam" maxlength="30" autocomplete="off">
+    <button type="submit" class="primary" style="padding:9px 16px">➕ Add</button>
+  </form>
+  <div class="btns"><button type="button" id="expClose">Done</button></div>
+</dialog>
 <header>
   <div class="hwrap">
     <div class="brand">
       <div class="logo">🏏</div>
       <div>
-        <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v13</span></h1>
+        <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v14</span></h1>
         <div class="small"><span class="sync" id="sync">Connecting</span> <span class="mut sub" id="who"></span></div>
       </div>
     </div>
     <div class="actions">
+      <button class="ghost" id="btnExperts">👥 Experts</button>
       <button class="ghost" id="btnExport">⬇ Backup</button>
       <button class="ghost" id="btnImport">⬆ Restore</button>
       <input type="file" id="fileImport" accept=".json,application/json" hidden>
@@ -306,8 +328,8 @@
 </main>
 
 <!-- ?v= forces browsers / GitHub Pages cache to fetch the matching engine for this page version -->
-<script src="engine.js?v=13"></script>
-<script src="firebase-config.js?v=13"></script>
+<script src="engine.js?v=14"></script>
+<script src="firebase-config.js?v=14"></script>
 <script>
   // If the Firebase module never starts (no internet, or opened as a local file), say so instead of hanging.
   setTimeout(() => {
@@ -341,24 +363,48 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;'
 const pct = x => (isFinite(x) ? (x * 100).toFixed(1) + '%' : '—');
 const frac = (c, n) => (n ? `${pct(c / n)} <span class="mut small">(${+c.toFixed(1)}/${n})</span>` : '<span class="mut">—</span>');
 const today = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
-const N_EXP = 10;
-const DEFAULT_NAMES = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'];
-const blank = v => Array(N_EXP).fill(v);
-// older data had 4 experts: pad names, and mark the newer experts as "not tracked" (-1) in old matches
-const fitExperts = ex => DEFAULT_NAMES.map((d, i) => (Array.isArray(ex) && typeof ex[i] === 'string' ? ex[i] : d));
+const MAX_EXP = 30, DEFAULT_COUNT = 10;
+const defaultName = i => (i < 26 ? String.fromCharCode(65 + i) : 'Expert ' + (i + 1));
 const OLD_LOCAL_KEY = 'cricExpertPredictor.v1';
-const ec = i => `--ec:var(--e${i})`;
+const ec = i => `--ec:var(--e${i % 10})`;
 const initial = s => (String(s).trim()[0] || '?').toUpperCase();
 
-let state = { experts: DEFAULT_NAMES.slice(), matches: [] };
+// Experts live in fixed slots: a slot is never deleted or reused, so every past pick stays with its expert.
+// "Remove" only marks the slot inactive (hidden from new matches, not voting, history kept).
+const defaultState = () => ({
+  experts: Array.from({ length: DEFAULT_COUNT }, (_, i) => defaultName(i)),
+  active: Array(DEFAULT_COUNT).fill(true), matches: [],
+});
+let state = defaultState();
+let rawMatches = [], serverExperts = null, serverActive = null;
 let R, EV;
+const count = () => state.experts.length;
+const blank = v => Array(count()).fill(v);
+const names = () => state.experts.map((n, i) => String(n || '').trim() || defaultName(i));
+const activeIdx = () => state.active.map((a, i) => (a ? i : -1)).filter(i => i >= 0);
+// columns worth showing: active experts + removed ones that still have picks in history
+const visibleIdx = () => state.experts.map((_, i) => i).filter(i => state.active[i] || state.matches.some(m => m.preds[i] !== -1));
 const emptyForm = () => ({ preds: blank(null), revealed: blank(null), editId: null, base: null });
 let form = emptyForm();
 const openDetails = new Set();
 const UNLOCK_MS = 5 * 60 * 1000;
 let unlockedUntil = 0;
 const unlockedRows = new Set(); // settled matches whose winner dropdown is temporarily unlocked
-const names = () => state.experts.map((n, i) => String(n || '').trim() || DEFAULT_NAMES[i]);
+
+// Builds state from the latest server data. Slot count = enough for every stored name and every stored pick.
+function rebuildState() {
+  const ex = Array.isArray(serverExperts) ? serverExperts : [];
+  const maxPreds = rawMatches.reduce((a, m) => Math.max(a, Array.isArray(m.preds) ? m.preds.length : 0), 0);
+  const n = Math.min(MAX_EXP, Math.max(ex.length, maxPreds, DEFAULT_COUNT));
+  state.experts = Array.from({ length: n }, (_, i) => (typeof ex[i] === 'string' ? ex[i] : defaultName(i)));
+  state.active = Array.from({ length: n }, (_, i) => (Array.isArray(serverActive) && typeof serverActive[i] === 'boolean' ? serverActive[i] : true));
+  if (!state.active.some(Boolean)) state.active[0] = true;
+  // learning order = match date, then entry order (so back-filled old matches land in the right place)
+  state.matches = rawMatches.map(m => E.fit(m, n)).sort((a, b) =>
+    String(a.date || '').localeCompare(String(b.date || '')) || ((a.seq || 0) - (b.seq || 0)) || (a.id < b.id ? -1 : 1));
+  // an expert added while the form is open gets an empty slot (new match) or "not tracked" (edit)
+  while (form.preds.length < n) { form.preds.push(form.editId ? 'X' : null); form.revealed.push(null); }
+}
 
 /* ---------- Firebase ---------- */
 const cfg = window.FIREBASE_CONFIG;
@@ -391,7 +437,11 @@ const clean = (m, seq) => ({
 // stored/engine form uses null for paid and -1 for not-tracked
 const toEngine = preds => preds.map(p => (p === 'P' ? null : p === 'X' ? -1 : p));
 const toForm = preds => preds.map(p => (p === null ? 'P' : p === -1 ? 'X' : p));
-const noneOpen = preds => preds.every(p => p === 'P' || p === 'X');
+// Picks to save from the form: removed experts get "not tracked" in a new match; in an edit their old picks stay.
+const formPredsForSave = () => toEngine(form.preds.map((p, i) =>
+  (state.active[i] ? p : form.editId ? (p === null ? 'X' : p) : 'X')));
+const formReady = () => activeIdx().every(i => form.preds[i] !== null);
+const saveExperts = () => write(setDoc(userDoc(), { experts: names(), active: state.active.slice() }, { merge: true }));
 
 function setSync(kind, text) {
   const el = $('#sync');
@@ -446,14 +496,13 @@ function startSync() {
         <li>Dusre browser (Chrome) ya Incognito me try karo</li></ol>`);
   }, 15000);
   unsubs.push(onSnapshot(userDoc(), snap => {
-    const ex = snap.exists() ? snap.data().experts : null;
-    if (Array.isArray(ex)) state.experts = fitExperts(ex);
+    const d = snap.exists() ? snap.data() : {};
+    serverExperts = Array.isArray(d.experts) ? d.experts.map(String) : null;
+    serverActive = Array.isArray(d.active) ? d.active : null;
     gotExperts = true; dataChanged();
   }, onSyncError));
   unsubs.push(onSnapshot(matchesCol(), { includeMetadataChanges: true }, snap => {
-    // learning order = match date, then entry order (so back-filled old matches land in the right place)
-    state.matches = snap.docs.map(d => E.fit(d.data(), N_EXP)).sort((a, b) =>
-      String(a.date || '').localeCompare(String(b.date || '')) || ((a.seq || 0) - (b.seq || 0)) || (a.id < b.id ? -1 : 1));
+    rawMatches = snap.docs.map(d => d.data());
     gotMatches = true;
     if (!pending) setSync(snap.metadata.fromCache ? 'busy' : 'ok', snap.metadata.fromCache ? 'Offline' : 'Synced');
     dataChanged();
@@ -463,7 +512,8 @@ function stopSync() {
   clearTimeout(loadTimer);
   unlockedUntil = 0; unlockedRows.clear();
   unsubs.forEach(u => u()); unsubs = [];
-  state = { experts: DEFAULT_NAMES.slice(), matches: [] };
+  state = defaultState();
+  rawMatches = []; serverExperts = serverActive = null;
   booted = false;
 }
 
@@ -474,6 +524,7 @@ function dataChanged() {
   booted = true; // must be set before rendering, or the table keeps showing "loading"
   clearTimeout(loadTimer); loadError = null;
   try {
+    rebuildState();
     renderAll(!first && typingName);
   } catch (e) {
     // never fail silently: an empty table must not look like lost data
@@ -498,17 +549,21 @@ function offerLocalMigration() {
     return;
   }
   if (!confirm(`Is browser me pehle ke ${old.matches.length} matches mile. Inhe server pe upload kar dein?`)) return;
-  replaceAll(old.experts || state.experts, old.matches).then(() => {
+  replaceAll(old.experts || state.experts, old.matches, null).then(() => {
     try { localStorage.removeItem(OLD_LOCAL_KEY); localStorage.removeItem('cricExpertPredictor.auth'); } catch (e) {}
   });
 }
 
 // Overwrites everything on the server with the given experts + matches (used by Restore & migration).
-async function replaceAll(experts, matches) {
+async function replaceAll(experts, matches, active) {
+  const n = Math.min(MAX_EXP, Math.max(experts.length, ...matches.map(m => m.preds.length), 1));
+  const ex = Array.from({ length: n }, (_, i) => (typeof experts[i] === 'string' && experts[i].trim() ? experts[i] : defaultName(i)));
+  const act = Array.from({ length: n }, (_, i) => (Array.isArray(active) && typeof active[i] === 'boolean' ? active[i] : true));
+  if (!act.some(Boolean)) act[0] = true;
   const keep = new Set(matches.map(m => String(m.id)));
   const ops = state.matches.filter(m => !keep.has(m.id)).map(m => b => b.delete(matchDoc(m.id)));
-  matches.forEach((m, i) => ops.push(b => b.set(matchDoc(String(m.id)), clean(E.fit(m, N_EXP), i + 1))));
-  ops.push(b => b.set(userDoc(), { experts: fitExperts(experts) }, { merge: true }));
+  matches.forEach((m, i) => ops.push(b => b.set(matchDoc(String(m.id)), clean(E.fit(m, n), i + 1))));
+  ops.push(b => b.set(userDoc(), { experts: ex, active: act }, { merge: true }));
   const run = async () => {
     for (let i = 0; i < ops.length; i += 400) {
       const batch = writeBatch(db);
@@ -577,10 +632,10 @@ function teamNames() { return [$('#t1').value.trim() || 'Team 1', $('#t2').value
 
 function renderPickers() {
   const [a, b] = teamNames();
-  $('#pickers').innerHTML = state.experts.map((e, i) => `
+  $('#pickers').innerHTML = activeIdx().map(i => [state.experts[i], i]).map(([e, i]) => `
     <div class="picker ${form.preds[i] === 'P' ? 'is-paid' : ''}" style="${ec(i)}">
       <div class="phead">
-        <div class="avatar" data-av="${i}">${esc(initial(e || DEFAULT_NAMES[i]))}</div>
+        <div class="avatar" data-av="${i}">${esc(initial(e || defaultName(i)))}</div>
         <div class="pname">
           <input data-name="${i}" value="${esc(e)}" placeholder="Expert ka naam likho" maxlength="30">
           <div class="mut small">Expert ${i + 1}${form.preds[i] === 'X' ? ' · is match me tracked nahi tha' : ''}</div>
@@ -625,20 +680,20 @@ function updatePickerTeams() {
 function renderPreview() {
   const box = $('#preview');
   const t1 = $('#t1').value.trim(), t2 = $('#t2').value.trim();
-  if (!t1 || !t2 || form.preds.includes(null)) {
+  if (!t1 || !t2 || !formReady()) {
     box.className = 'reco';
-    const left = form.preds.filter(p => p === null).length;
+    const left = activeIdx().filter(i => form.preds[i] === null).length;
     box.innerHTML = `<div class="lbl">System Recommendation</div>
       <div class="mut" style="margin-top:6px">${!t1 || !t2 ? 'Dono teams ke naam daalo' : `${left} expert baaki`}</div>`;
     return;
   }
-  if (noneOpen(form.preds)) {
+  if (!formPredsForSave().some(E.isOpen)) {
     box.className = 'reco';
     box.innerHTML = `<div class="lbl">System Recommendation</div>
       <div class="no" style="margin-top:6px">Kam se kam 1 prediction open chahiye</div>`;
     return;
   }
-  const m = { t1, t2, preds: toEngine(form.preds) };
+  const m = { t1, t2, preds: formPredsForSave() };
   const pr = E.predictWith(previewContext(), m, names());
   const tn = [t1, t2];
   box.className = 'reco live';
@@ -681,10 +736,11 @@ async function submitForm() {
   const t1 = $('#t1').value.trim(), t2 = $('#t2').value.trim();
   if (!t1 || !t2) return alert('Dono team ka naam daalo.');
   if (E.norm(t1) === E.norm(t2)) return alert('Dono team same nahi ho sakti.');
-  if (form.preds.includes(null)) return alert('Sabhi experts ke liye team ya 💰 Paid select karo.');
-  if (noneOpen(form.preds)) return alert('Kam se kam 1 expert ki prediction open honi chahiye.');
+  if (!formReady()) return alert('Sabhi experts ke liye team ya 💰 Paid select karo.');
+  const preds = formPredsForSave();
+  if (!preds.some(E.isOpen)) return alert('Kam se kam 1 expert ki prediction open honi chahiye.');
   const data = { t1, t2, date: $('#date').value || today(), note: $('#note').value.trim(),
-                 preds: toEngine(form.preds), revealed: form.revealed.slice() };
+                 preds, revealed: form.revealed.slice() };
   let m;
   if (form.editId) {
     const old = state.matches.find(x => x.id === form.editId);
@@ -704,7 +760,7 @@ async function submitForm() {
 function editMatch(id) {
   const m = state.matches.find(x => x.id === id);
   if (!m) return;
-  form = { preds: toForm(m.preds), revealed: (m.revealed || blank(null)).slice(),
+  form = { preds: toForm(m.preds), revealed: E.fit(m, count()).revealed.slice(),
            editId: id, base: [E.norm(m.t1), E.norm(m.t2)] };
   $('#t1').value = m.t1; $('#t2').value = m.t2; $('#date').value = m.date || ''; $('#note').value = m.note || '';
   $('#formTitle').textContent = 'Edit Match';
@@ -730,7 +786,7 @@ function renderKpis() {
   const S = R.S, N = names(), pendingN = state.matches.filter(m => m.result === null).length;
   const abdN = state.matches.filter(m => m.result === 'NR').length;
   let best = -1;
-  S.ex.forEach((e, i) => { if (e.n && (best < 0 || e.c / e.n > S.ex[best].c / S.ex[best].n)) best = i; });
+  S.ex.forEach((e, i) => { if (state.active[i] && e.n && (best < 0 || e.c / e.n > S.ex[best].c / S.ex[best].n)) best = i; });
   const hi = EV.buckets.filter(b => b.lab === 'STRONG' || b.lab === 'GOOD');
   const hiC = hi.reduce((a, b) => a + b.c, 0), hiN = hi.reduce((a, b) => a + b.n, 0);
   const gain = EV.decisive ? (EV.sysOnDecisive - EV.majC) / EV.decisive : NaN;
@@ -756,7 +812,8 @@ function renderTable() {
     $('#tbl').innerHTML = '<tr><td class="empty"><div class="e">🏏</div>Abhi koi match nahi</td></tr>';
     return;
   }
-  let h = `<thead><tr><th>#</th><th>Date</th><th>Match</th>${N.map((n, i) => `<th style="${ec(i)}"><span class="dot"></span>${esc(n)}</th>`).join('')}
+  const vis = visibleIdx();
+  let h = `<thead><tr><th>#</th><th>Date</th><th>Match</th>${vis.map(i => `<th style="${ec(i)}"><span class="dot"></span>${esc(N[i])}${state.active[i] ? '' : ' <span class="mut">(removed)</span>'}</th>`).join('')}
     <th>Split</th><th>System Pick</th><th>Final Winner</th><th>Status</th><th></th></tr></thead><tbody>`;
   for (let idx = R.rows.length - 1; idx >= 0; idx--) {
     const { m, pred } = R.rows[idx], done = E.isDone(m), tn = [m.t1, m.t2];
@@ -767,8 +824,8 @@ function renderTable() {
       <td class="mut idx">${idx + 1}</td>
       <td class="mut" data-label="#${idx + 1} · Date">${esc(m.date || '')}</td>
       <td class="match wide nolabel"><span><b>${esc(m.t1)}</b> <span class="mut">vs</span> <b>${esc(m.t2)}</b></span>${m.note ? `<div class="mut small">${esc(m.note)}</div>` : ''}</td>
-      ${m.preds.map((p, i) => {
-        const rv = m.revealed && m.revealed[i];
+      ${vis.map(i => {
+        const p = m.preds[i], rv = m.revealed && m.revealed[i];
         const cell = p === -1 ? '<span class="mut">—</span>'
           : p !== null ? `<span class="chip ${done ? (p === m.result ? 'ok' : 'no') : ''}">${esc(tn[p])}</span>`
           : rv === 0 || rv === 1 ? `<span class="chip paid">💰</span> <span class="chip ${done ? (rv === m.result ? 'ok' : 'no') : ''}">${esc(tn[rv])}</span>`
@@ -789,7 +846,7 @@ function renderTable() {
       <td data-label="Status">${mark}</td>
       <td class="acts wide nolabel">${m.result === null ? `<button class="link abdbtn" data-act="abd" data-id="${esc(m.id)}">🚫 Abandoned</button>` : ''}<button class="link" data-act="det" data-id="${esc(m.id)}">Why?</button><button class="link" data-act="edit" data-id="${esc(m.id)}">Edit</button><button class="link" data-act="del" data-id="${esc(m.id)}">🗑</button></td>
     </tr>
-    <tr class="det" data-det="${esc(m.id)}" ${openDetails.has(m.id) ? '' : 'hidden'}><td colspan="${9 + N.length}">${detailsHtml(pred, m)}</td></tr>`;
+    <tr class="det" data-det="${esc(m.id)}" ${openDetails.has(m.id) ? '' : 'hidden'}><td colspan="${9 + vis.length}">${detailsHtml(pred, m)}</td></tr>`;
   }
   $('#tbl').innerHTML = h + '</tbody>';
 }
@@ -810,19 +867,21 @@ function renderExperts() {
   const cf = r => (r ? frac(r.c, r.n) : '<span class="mut">—</span>');
   let h = '<table><thead><tr><th>Expert</th><th>Overall</th><th>Last 10</th><th>Streak</th><th>Majority me</th><th>Minority me</th><th>Tie (2-2 / 1-1)</th><th>Akela open</th><th>Paid</th></tr></thead><tbody>';
   S.ex.forEach((e, i) => {
+    if (!state.active[i] && !e.n && !e.paid) return; // removed and never had a record
     const l10 = e.hist.slice(-10), l10c = l10.reduce((a, b) => a + b, 0);
     const st = e.streak > 0 ? `<span class="ok">🔥 ${e.streak}W</span>` : e.streak < 0 ? `<span class="no">${-e.streak}L</span>` : '—';
-    h += `<tr><td style="${ec(i)}"><span class="dot"></span><b>${esc(N[i])}</b></td><td>${frac(e.c, e.n)}</td><td>${frac(l10c, l10.length)}</td><td>${st}</td>
+    h += `<tr${state.active[i] ? '' : ' style="opacity:.55"'}><td style="${ec(i)}"><span class="dot"></span><b>${esc(N[i])}</b>${state.active[i] ? '' : ' <span class="mut small">(removed)</span>'}</td><td>${frac(e.c, e.n)}</td><td>${frac(l10c, l10.length)}</td><td>${st}</td>
       <td>${cf(e.cat.maj)}</td><td>${cf(e.cat.min)}</td><td>${cf(e.cat.tie)}</td><td>${cf(e.cat.solo)}</td>
       <td>${e.paid || '—'}${e.paidRev.n ? `<div class="small">revealed: ${frac(e.paidRev.c, e.paidRev.n)}</div>` : ''}</td></tr>`;
   });
   h += '</tbody></table>';
 
+  const act = activeIdx();
   h += '<h2 style="margin-top:20px;font-size:14px">Head-to-Head</h2><table><thead><tr><th></th>' +
-    N.map(x => `<th>vs ${esc(x)}</th>`).join('') + '</tr></thead><tbody>';
-  for (let i = 0; i < N_EXP; i++) {
+    act.map(j => `<th>vs ${esc(N[j])}</th>`).join('') + '</tr></thead><tbody>';
+  for (const i of act) {
     h += `<tr><td style="${ec(i)}"><span class="dot"></span><b>${esc(N[i])}</b></td>`;
-    for (let j = 0; j < N_EXP; j++) h += i === j ? '<td class="mut">—</td>' : `<td>${frac(S.pair[i][j].c, S.pair[i][j].n)}</td>`;
+    for (const j of act) h += i === j ? '<td class="mut">—</td>' : `<td>${frac(S.pair[i][j].c, S.pair[i][j].n)}</td>`;
     h += '</tr>';
   }
   $('#expertTbl').innerHTML = h + '</tbody></table>';
@@ -835,7 +894,7 @@ function renderSplit() {
   const rows = keys.map(k => {
     const s = S.split[k], sys = EV.bySplit[k] || { c: 0, n: 0 };
     const [a, b] = k.split('-').map(Number), tie = a === b;
-    return `<tr><td><b>${k}</b> <span class="mut small">${a + b}/${N_EXP} open</span></td><td>${s.n}</td>
+    return `<tr><td><b>${k}</b> <span class="mut small">${a + b} open</span></td><td>${s.n}</td>
       <td>${tie ? '<span class="mut">n/a</span>' : frac(s.c, s.n)}</td>
       <td>${tie ? '<span class="mut">n/a</span>' : frac(s.n - s.c, s.n)}</td>
       <td>${frac(sys.c, sys.n)}</td></tr>`;
@@ -845,8 +904,9 @@ function renderSplit() {
 
 function renderPatterns() {
   // with 10 experts exact groupings rarely repeat, so show which pairs are strongest when they agree
-  const N = names(), S = R.S, pairs = [];
-  for (let i = 0; i < N_EXP; i++) for (let j = i + 1; j < N_EXP; j++) {
+  const N = names(), S = R.S, pairs = [], act = activeIdx();
+  for (const i of act) for (const j of act) {
+    if (j <= i) continue;
     const g = S.agree[i][j];
     if (g.n >= 3) pairs.push({ i, j, g, r: (g.c + 1) / (g.n + 2) });
   }
@@ -913,13 +973,13 @@ $('#pickers').addEventListener('input', e => {
   if (!inp) return;
   const i = +inp.dataset.name;
   state.experts[i] = inp.value;
-  document.querySelector(`[data-av="${i}"]`).textContent = initial(inp.value || DEFAULT_NAMES[i]);
+  document.querySelector(`[data-av="${i}"]`).textContent = initial(inp.value || defaultName(i));
 });
 $('#pickers').addEventListener('change', e => {
   const inp = e.target.closest('input[data-name]');
   if (!inp) return;
   state.experts[+inp.dataset.name] = inp.value; // a server snapshot may have arrived mid-typing
-  write(setDoc(userDoc(), { experts: state.experts.map(String) }, { merge: true }));
+  saveExperts();
   renderAll(true);
 });
 $('#pickers').addEventListener('keydown', e => {
@@ -928,6 +988,69 @@ $('#pickers').addEventListener('keydown', e => {
 ['#t1', '#t2'].forEach(s => $(s).addEventListener('input', updatePickerTeams));
 $('#btnAdd').addEventListener('click', submitForm);
 $('#btnCancel').addEventListener('click', resetForm);
+
+/* ---------- experts: add / remove / restore / rename ---------- */
+function renderExpertList() {
+  const N = names(), S = R && R.S;
+  $('#expList').innerHTML = N.map((n, i) => {
+    const e = S && S.ex[i], on = state.active[i];
+    const stat = e && e.n ? `${e.n} match · ${Math.round(e.c / e.n * 100)}%` : 'koi record nahi';
+    return `<div class="exprow ${on ? '' : 'off'}" style="${ec(i)}">
+      <div class="avatar">${esc(initial(n))}</div>
+      <input data-ename="${i}" value="${esc(state.experts[i])}" maxlength="30">
+      <span class="stat">${stat}</span>
+      <button type="button" class="${on ? 'danger' : ''}" data-eact="${on ? 'remove' : 'restore'}" data-i="${i}">${on ? 'Remove' : 'Wapas laao'}</button>
+    </div>`;
+  }).join('');
+}
+function expertsChanged() {
+  state.matches = state.matches.map(m => E.fit(m, count())); // new slot → "not tracked" in every old match
+  saveExperts();
+  renderAll();
+  if ($('#expDlg').open) renderExpertList();
+}
+$('#btnExperts').addEventListener('click', () => { renderExpertList(); $('#expDlg').showModal(); });
+$('#expClose').addEventListener('click', () => $('#expDlg').close());
+$('#expList').addEventListener('click', e => {
+  const b = e.target.closest('button[data-eact]');
+  if (!b) return;
+  const i = +b.dataset.i, nm = names()[i];
+  if (b.dataset.eact === 'remove') {
+    if (activeIdx().length <= 1) return alert('Kam se kam 1 expert active hona chahiye.');
+    if (!confirm(`${nm} ko remove karna hai?\n\nNaye matches me ${nm} nahi dikhega aur prediction me vote nahi karega. Uska purana record aur purane matches safe rahenge. Kabhi bhi "Wapas laao" kar sakte ho.`)) return;
+    state.active[i] = false;
+  } else {
+    state.active[i] = true;
+    // an unsent new-match form needs a pick for the returning expert; an edit keeps the stored value
+    if (!form.editId && form.preds[i] === 'X') form.preds[i] = null;
+  }
+  expertsChanged();
+});
+$('#expList').addEventListener('change', e => {
+  const inp = e.target.closest('input[data-ename]');
+  if (!inp) return;
+  state.experts[+inp.dataset.ename] = inp.value;
+  expertsChanged();
+});
+$('#expAddForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const nm = $('#expNew').value.trim();
+  if (!nm) return;
+  if (count() >= MAX_EXP) return alert(`Zyada se zyada ${MAX_EXP} experts ho sakte hain.`);
+  const clash = names().findIndex(x => E.norm(x) === E.norm(nm));
+  if (clash >= 0) {
+    return alert(state.active[clash]
+      ? `"${nm}" naam ka expert pehle se hai.`
+      : `"${nm}" pehle remove kiya gaya tha. Usi row me "Wapas laao" dabao, taaki uska purana record bhi wapas aaye.`);
+  }
+  // always a brand-new slot at the end: old matches get "not tracked" for it, nothing shifts
+  state.experts.push(nm);
+  state.active.push(true);
+  form.preds.push(form.editId ? 'X' : null);
+  form.revealed.push(null);
+  $('#expNew').value = '';
+  expertsChanged();
+});
 
 /* ---------- result lock ----------
    A settled match (winner / abandoned) is locked. Changing it, or editing / deleting it,
@@ -1013,7 +1136,7 @@ function download(name, text, type) {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 $('#btnExport').addEventListener('click', () => {
-  const data = { experts: state.experts, matches: state.matches.map(m => clean(m)) };
+  const data = { experts: names(), active: state.active.slice(), matches: state.matches.map(m => clean(m)) };
   download(`cricket-predictor-backup-${today()}.json`, JSON.stringify(data, null, 2), 'application/json');
 });
 $('#btnImport').addEventListener('click', () => $('#fileImport').click());
@@ -1024,22 +1147,27 @@ $('#fileImport').addEventListener('change', async e => {
   try {
     s = JSON.parse(await f.text());
     const okPick = p => p === 0 || p === 1 || p === null || p === -1;
-    const okMatch = m => m && m.id && m.t1 && m.t2 && Array.isArray(m.preds) && m.preds.length >= 1 && m.preds.length <= N_EXP &&
+    const okMatch = m => m && m.id && m.t1 && m.t2 && Array.isArray(m.preds) && m.preds.length >= 1 && m.preds.length <= MAX_EXP &&
       m.preds.every(okPick) && m.preds.some(E.isOpen) && [null, 0, 1, 'NR'].includes(m.result) &&
-      (m.revealed === undefined || (Array.isArray(m.revealed) && m.revealed.length <= N_EXP && m.revealed.every(okPick)));
-    if (!Array.isArray(s.matches) || !Array.isArray(s.experts) || !s.experts.length || s.experts.length > N_EXP || !s.matches.every(okMatch)) throw 0;
+      (m.revealed === undefined || (Array.isArray(m.revealed) && m.revealed.length <= MAX_EXP && m.revealed.every(okPick)));
+    if (!Array.isArray(s.matches) || !Array.isArray(s.experts) || !s.experts.length || s.experts.length > MAX_EXP ||
+        (s.active !== undefined && !(Array.isArray(s.active) && s.active.every(a => typeof a === 'boolean'))) ||
+        !s.matches.every(okMatch)) throw 0;
   } catch (err) { return alert('Invalid backup file.'); }
   if (state.matches.some(m => m.result !== null) && !(await requirePassword('Restore se saare settled matches badal jayenge'))) return;
   if (!confirm(`${s.matches.length} matches server pe restore honge, current server data replace hoga. Continue?`)) return;
   resetForm();
-  replaceAll(s.experts, s.matches);
+  replaceAll(s.experts, s.matches, s.active);
 });
 $('#btnCsv').addEventListener('click', () => {
   const q = v => `"${String(v).replace(/"/g, '""')}"`;
-  const lines = [['#', 'Date', 'Team 1', 'Team 2', 'Note', ...names(), 'Split', 'System Pick', 'Confidence', 'Level', 'Winner', 'System Correct'].map(q).join(',')];
-  R.rows.forEach(({ m, pred }, i) => {
+  const N = names(), vis = visibleIdx();
+  const lines = [['#', 'Date', 'Team 1', 'Team 2', 'Note', ...vis.map(i => N[i] + (state.active[i] ? '' : ' (removed)')),
+    'Split', 'System Pick', 'Confidence', 'Level', 'Winner', 'System Correct'].map(q).join(',')];
+  R.rows.forEach(({ m, pred }, k) => {
     const tn = [m.t1, m.t2], done = E.isDone(m);
-    lines.push([i + 1, m.date, m.t1, m.t2, m.note || '', ...m.preds.map((p, i) => (p === -1 ? '' : p !== null ? tn[p] : E.isOpen(m.revealed[i]) ? 'PAID → ' + tn[m.revealed[i]] : 'PAID')), E.splitOf(m.preds).key,
+    const cell = i => { const p = m.preds[i]; return p === -1 ? '' : p !== null ? tn[p] : E.isOpen(m.revealed[i]) ? 'PAID → ' + tn[m.revealed[i]] : 'PAID'; };
+    lines.push([k + 1, m.date, m.t1, m.t2, m.note || '', ...vis.map(cell), E.splitOf(m.preds).key,
       tn[pred.pick], (pred.conf * 100).toFixed(1) + '%', pred.verdict,
       done ? tn[m.result] : m.result === 'NR' ? 'Abandoned' : '', done ? (pred.pick === m.result ? 'YES' : 'NO') : ''].map(q).join(','));
   });
@@ -1049,7 +1177,7 @@ $('#btnReset').addEventListener('click', async () => {
   if (state.matches.some(m => m.result !== null) && !(await requirePassword('Reset se saare settled matches delete honge'))) return;
   if (!confirm('Server se SAARE matches delete ho jayenge (expert names rahenge). Pehle Backup le lo. Pakka reset karna hai?')) return;
   resetForm();
-  replaceAll(state.experts, []);
+  replaceAll(names(), [], state.active);
 });
 </script>
 </body>
