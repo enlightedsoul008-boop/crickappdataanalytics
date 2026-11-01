@@ -158,17 +158,6 @@
   dialog#pwDlg form { display: flex; flex-direction: column; gap: 12px; }
   dialog#pwDlg input { font-size: 16px; }
   dialog#pwDlg .btns { display: flex; gap: 10px; justify-content: flex-end; }
-  dialog#expDlg { width: min(520px, calc(100vw - 24px)); max-height: calc(100vh - 40px); background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 16px; padding: 20px; box-shadow: 0 20px 60px rgba(0,0,0,.5); }
-  dialog#expDlg::backdrop { background: rgba(0,0,0,.6); backdrop-filter: blur(3px); }
-  dialog#expDlg h3 { margin: 0 0 4px; font-size: 17px; }
-  .exprow { display: grid; grid-template-columns: auto 1fr auto auto; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
-  .exprow .avatar { width: 30px; height: 30px; font-size: 13px; }
-  .exprow input { padding: 7px 10px; }
-  .exprow.off { opacity: .5; }
-  .exprow .stat { font-size: 12px; color: var(--mut); white-space: nowrap; }
-  #expAddForm { display: flex; gap: 8px; margin-top: 14px; }
-  #expDlg .btns { display: flex; justify-content: flex-end; margin-top: 14px; }
-  @media (max-width: 480px) { .exprow { grid-template-columns: auto 1fr auto; } .exprow .stat { display: none; } }
   .lockbox .primary { width: 100%; }
   .notice { text-align: left; margin-top: 18px; padding: 14px; border-radius: 12px; background: var(--panel2); border: 1px solid var(--line); font-size: 13px; }
   .notice ol { margin: 8px 0 0; padding-left: 18px; } .notice li { margin: 3px 0; }
@@ -198,7 +187,7 @@
     .brand .sub { display: none; }
     .logo { width: 36px; height: 36px; font-size: 18px; }
     h1 { font-size: 16px; }
-    .actions { width: 100%; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .actions { width: 100%; display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
     .actions button { padding: 7px 4px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     header { position: static; }
 
@@ -225,7 +214,7 @@
 <div class="lock">
   <div class="lockbox">
     <div class="logo">🏏</div>
-    <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v14</span></h1>
+    <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v15</span></h1>
     <div class="mut small" id="lockSub">Connecting…</div>
     <form id="loginForm" autocomplete="on" hidden>
       <div class="field"><label for="email">Email</label><input id="email" type="email" autocomplete="username" placeholder="you@gmail.com" required></div>
@@ -257,27 +246,16 @@
     </div>
   </form>
 </dialog>
-<dialog id="expDlg">
-  <h3>👥 Experts</h3>
-  <div class="mut small">Remove karne pe purana record safe rehta hai. Kabhi bhi wapas la sakte ho.</div>
-  <div id="expList"></div>
-  <form id="expAddForm">
-    <input id="expNew" placeholder="Naye expert ka naam" maxlength="30" autocomplete="off">
-    <button type="submit" class="primary" style="padding:9px 16px">➕ Add</button>
-  </form>
-  <div class="btns"><button type="button" id="expClose">Done</button></div>
-</dialog>
 <header>
   <div class="hwrap">
     <div class="brand">
       <div class="logo">🏏</div>
       <div>
-        <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v14</span></h1>
+        <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v15</span></h1>
         <div class="small"><span class="sync" id="sync">Connecting</span> <span class="mut sub" id="who"></span></div>
       </div>
     </div>
     <div class="actions">
-      <button class="ghost" id="btnExperts">👥 Experts</button>
       <button class="ghost" id="btnExport">⬇ Backup</button>
       <button class="ghost" id="btnImport">⬆ Restore</button>
       <input type="file" id="fileImport" accept=".json,application/json" hidden>
@@ -328,8 +306,8 @@
 </main>
 
 <!-- ?v= forces browsers / GitHub Pages cache to fetch the matching engine for this page version -->
-<script src="engine.js?v=14"></script>
-<script src="firebase-config.js?v=14"></script>
+<script src="engine.js?v=15"></script>
+<script src="firebase-config.js?v=15"></script>
 <script>
   // If the Firebase module never starts (no internet, or opened as a local file), say so instead of hanging.
   setTimeout(() => {
@@ -363,14 +341,13 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;'
 const pct = x => (isFinite(x) ? (x * 100).toFixed(1) + '%' : '—');
 const frac = (c, n) => (n ? `${pct(c / n)} <span class="mut small">(${+c.toFixed(1)}/${n})</span>` : '<span class="mut">—</span>');
 const today = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
-const MAX_EXP = 30, DEFAULT_COUNT = 10;
+const MAX_EXP = 6, DEFAULT_COUNT = 6; // fixed panel of 6 experts
 const defaultName = i => (i < 26 ? String.fromCharCode(65 + i) : 'Expert ' + (i + 1));
 const OLD_LOCAL_KEY = 'cricExpertPredictor.v1';
 const ec = i => `--ec:var(--e${i % 10})`;
 const initial = s => (String(s).trim()[0] || '?').toUpperCase();
 
-// Experts live in fixed slots: a slot is never deleted or reused, so every past pick stays with its expert.
-// "Remove" only marks the slot inactive (hidden from new matches, not voting, history kept).
+// Experts live in fixed slots, so every past pick stays with its expert.
 const defaultState = () => ({
   experts: Array.from({ length: DEFAULT_COUNT }, (_, i) => defaultName(i)),
   active: Array(DEFAULT_COUNT).fill(true), matches: [],
@@ -397,13 +374,10 @@ function rebuildState() {
   const maxPreds = rawMatches.reduce((a, m) => Math.max(a, Array.isArray(m.preds) ? m.preds.length : 0), 0);
   const n = Math.min(MAX_EXP, Math.max(ex.length, maxPreds, DEFAULT_COUNT));
   state.experts = Array.from({ length: n }, (_, i) => (typeof ex[i] === 'string' ? ex[i] : defaultName(i)));
-  state.active = Array.from({ length: n }, (_, i) => (Array.isArray(serverActive) && typeof serverActive[i] === 'boolean' ? serverActive[i] : true));
-  if (!state.active.some(Boolean)) state.active[0] = true;
+  state.active = Array(n).fill(true);
   // learning order = match date, then entry order (so back-filled old matches land in the right place)
   state.matches = rawMatches.map(m => E.fit(m, n)).sort((a, b) =>
     String(a.date || '').localeCompare(String(b.date || '')) || ((a.seq || 0) - (b.seq || 0)) || (a.id < b.id ? -1 : 1));
-  // an expert added while the form is open gets an empty slot (new match) or "not tracked" (edit)
-  while (form.preds.length < n) { form.preds.push(form.editId ? 'X' : null); form.revealed.push(null); }
 }
 
 /* ---------- Firebase ---------- */
@@ -989,69 +963,6 @@ $('#pickers').addEventListener('keydown', e => {
 $('#btnAdd').addEventListener('click', submitForm);
 $('#btnCancel').addEventListener('click', resetForm);
 
-/* ---------- experts: add / remove / restore / rename ---------- */
-function renderExpertList() {
-  const N = names(), S = R && R.S;
-  $('#expList').innerHTML = N.map((n, i) => {
-    const e = S && S.ex[i], on = state.active[i];
-    const stat = e && e.n ? `${e.n} match · ${Math.round(e.c / e.n * 100)}%` : 'koi record nahi';
-    return `<div class="exprow ${on ? '' : 'off'}" style="${ec(i)}">
-      <div class="avatar">${esc(initial(n))}</div>
-      <input data-ename="${i}" value="${esc(state.experts[i])}" maxlength="30">
-      <span class="stat">${stat}</span>
-      <button type="button" class="${on ? 'danger' : ''}" data-eact="${on ? 'remove' : 'restore'}" data-i="${i}">${on ? 'Remove' : 'Wapas laao'}</button>
-    </div>`;
-  }).join('');
-}
-function expertsChanged() {
-  state.matches = state.matches.map(m => E.fit(m, count())); // new slot → "not tracked" in every old match
-  saveExperts();
-  renderAll();
-  if ($('#expDlg').open) renderExpertList();
-}
-$('#btnExperts').addEventListener('click', () => { renderExpertList(); $('#expDlg').showModal(); });
-$('#expClose').addEventListener('click', () => $('#expDlg').close());
-$('#expList').addEventListener('click', e => {
-  const b = e.target.closest('button[data-eact]');
-  if (!b) return;
-  const i = +b.dataset.i, nm = names()[i];
-  if (b.dataset.eact === 'remove') {
-    if (activeIdx().length <= 1) return alert('Kam se kam 1 expert active hona chahiye.');
-    if (!confirm(`${nm} ko remove karna hai?\n\nNaye matches me ${nm} nahi dikhega aur prediction me vote nahi karega. Uska purana record aur purane matches safe rahenge. Kabhi bhi "Wapas laao" kar sakte ho.`)) return;
-    state.active[i] = false;
-  } else {
-    state.active[i] = true;
-    // an unsent new-match form needs a pick for the returning expert; an edit keeps the stored value
-    if (!form.editId && form.preds[i] === 'X') form.preds[i] = null;
-  }
-  expertsChanged();
-});
-$('#expList').addEventListener('change', e => {
-  const inp = e.target.closest('input[data-ename]');
-  if (!inp) return;
-  state.experts[+inp.dataset.ename] = inp.value;
-  expertsChanged();
-});
-$('#expAddForm').addEventListener('submit', e => {
-  e.preventDefault();
-  const nm = $('#expNew').value.trim();
-  if (!nm) return;
-  if (count() >= MAX_EXP) return alert(`Zyada se zyada ${MAX_EXP} experts ho sakte hain.`);
-  const clash = names().findIndex(x => E.norm(x) === E.norm(nm));
-  if (clash >= 0) {
-    return alert(state.active[clash]
-      ? `"${nm}" naam ka expert pehle se hai.`
-      : `"${nm}" pehle remove kiya gaya tha. Usi row me "Wapas laao" dabao, taaki uska purana record bhi wapas aaye.`);
-  }
-  // always a brand-new slot at the end: old matches get "not tracked" for it, nothing shifts
-  state.experts.push(nm);
-  state.active.push(true);
-  form.preds.push(form.editId ? 'X' : null);
-  form.revealed.push(null);
-  $('#expNew').value = '';
-  expertsChanged();
-});
-
 /* ---------- result lock ----------
    A settled match (winner / abandoned) is locked. Changing it, or editing / deleting it,
    needs the login password, re-checked by Firebase. One unlock lasts a few minutes. */
@@ -1175,9 +1086,9 @@ $('#btnCsv').addEventListener('click', () => {
 });
 $('#btnReset').addEventListener('click', async () => {
   if (state.matches.some(m => m.result !== null) && !(await requirePassword('Reset se saare settled matches delete honge'))) return;
-  if (!confirm('Server se SAARE matches delete ho jayenge (expert names rahenge). Pehle Backup le lo. Pakka reset karna hai?')) return;
+  if (!confirm('Server se SAARE matches aur experts ka poora data delete ho jayega. Naam bhi A–F ho jayenge. Ye wapas nahi aayega, pehle Backup le lo. Pakka reset karna hai?')) return;
   resetForm();
-  replaceAll(names(), [], state.active);
+  replaceAll(defaultState().experts, [], null);
 });
 </script>
 </body>
