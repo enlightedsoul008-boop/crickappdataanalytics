@@ -72,6 +72,10 @@
   .vs { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-size: 13px;
         background: var(--panel3); border: 1px solid var(--line); color: var(--mut); }
   .teams input { font-size: 16px; font-weight: 600; padding: 12px 14px; }
+  .teams { align-items: start; }
+  .teams .vs { margin-top: 24px; }
+  .hint { font-size: 12px; color: var(--warn); min-height: 0; }
+  .hint button { padding: 2px 8px; font-size: 12px; margin-left: 4px; border-color: var(--warn); color: var(--warn); }
   .meta { display: grid; grid-template-columns: 200px 1fr; gap: 12px; margin-top: 12px; }
   .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 
@@ -224,7 +228,7 @@
 <div class="lock">
   <div class="lockbox">
     <div class="logo">🏏</div>
-    <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v17</span></h1>
+    <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v18</span></h1>
     <div class="mut small" id="lockSub">Connecting…</div>
     <form id="loginForm" autocomplete="on" hidden>
       <div class="field"><label for="email">Email</label><input id="email" type="email" autocomplete="username" placeholder="you@gmail.com" required></div>
@@ -271,7 +275,7 @@
     <div class="brand">
       <div class="logo">🏏</div>
       <div>
-        <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v17</span></h1>
+        <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v18</span></h1>
         <div class="small"><span class="sync" id="sync">Connecting</span> <span class="mut sub" id="who"></span></div>
       </div>
     </div>
@@ -293,9 +297,9 @@
   <section class="card">
     <h2><span class="ic">➕</span><span id="formTitle">New Match</span></h2>
     <div class="teams">
-      <div class="field"><label for="t1">Team 1</label><input id="t1" list="teamList" placeholder="England" autocomplete="off"></div>
+      <div class="field"><label for="t1">Team 1</label><input id="t1" list="teamList" placeholder="England" autocomplete="off"><div class="hint" id="t1hint"></div></div>
       <div class="vs">VS</div>
-      <div class="field"><label for="t2">Team 2</label><input id="t2" list="teamList" placeholder="New Zealand" autocomplete="off"></div>
+      <div class="field"><label for="t2">Team 2</label><input id="t2" list="teamList" placeholder="New Zealand" autocomplete="off"><div class="hint" id="t2hint"></div></div>
     </div>
     <div class="meta">
       <div class="field"><label for="date">Date</label><input id="date" type="date"></div>
@@ -327,8 +331,8 @@
 </main>
 
 <!-- ?v= forces browsers / GitHub Pages cache to fetch the matching engine for this page version -->
-<script src="engine.js?v=17"></script>
-<script src="firebase-config.js?v=17"></script>
+<script src="engine.js?v=18"></script>
+<script src="firebase-config.js?v=18"></script>
 <script>
   // If the Firebase module never starts (no internet, or opened as a local file), say so instead of hanging.
   setTimeout(() => {
@@ -874,6 +878,7 @@ function verdictNote(v) {
 function resetForm() {
   form = emptyForm();
   $('#t1').value = ''; $('#t2').value = ''; $('#note').value = ''; $('#date').value = today();
+  $('#t1hint').innerHTML = $('#t2hint').innerHTML = '';
   $('#formTitle').textContent = 'New Match';
   $('#btnAdd').textContent = 'Add Match';
   $('#btnCancel').hidden = true;
@@ -939,9 +944,10 @@ function renderAll(keepPickers) {
   R = E.run(state.matches, names());
   // the engine re-predicts every match from history (that is how it learns); what is shown and scored
   // is the pick that was locked when the match was entered
+  const fair = fairHistory();
   R.rows = R.rows.map(r => {
     const s = r.m.sys;
-    if (!s) return r;
+    if (!s) return fair.has(r.m.id) ? { m: r.m, pred: fair.get(r.m.id) } : r;
     return { m: r.m, pred: { ...r.pred, pick: s.pick, p: s.p, conf: s.conf, verdict: s.verdict,
       probs: s.probs || r.pred.probs, w: s.w || r.pred.w, insights: s.insights.length ? s.insights : r.pred.insights, locked: s.at || true } };
   });
@@ -951,6 +957,26 @@ function renderAll(keepPickers) {
   renderExperts(); renderSplit(); renderPatterns(); renderBuckets(); renderModels(); renderChart();
   const teams = [...new Set(state.matches.flatMap(m => [m.t1, m.t2]))].sort();
   $('#teamList').innerHTML = teams.map(t => `<option value="${esc(t)}">`).join('');
+}
+
+// Settled matches from before picks were locked: we cannot know which same-day results were already in
+// when the user decided, so score them the safe way, using only matches of EARLIER days.
+let fairCache = { src: null, key: '', map: new Map() };
+function fairHistory() {
+  const key = names().join('|');
+  if (fairCache.src === state.matches && fairCache.key === key) return fairCache.map;
+  const map = new Map(), N = names(), byDate = new Map();
+  state.matches.forEach(m => {
+    if (m.sys || m.result === null || !m.preds.some(E.isOpen)) return;
+    if (!byDate.has(m.date)) byDate.set(m.date, []);
+    byDate.get(m.date).push(m);
+  });
+  byDate.forEach((list, d) => {
+    const ctx = E.run(state.matches.filter(x => x.date < d), N);
+    list.forEach(m => map.set(m.id, { ...E.predictWith(ctx, m, N), fair: true }));
+  });
+  fairCache = { src: state.matches, key, map };
+  return map;
 }
 
 function renderKpis() {
@@ -1030,6 +1056,7 @@ function detailsHtml(pred, m) {
       <td><div class="bar"><i style="width:${(pred.w[md.id] * 100).toFixed(1)}%"></i></div></td><td>${pct(pred.w[md.id])}</td></tr>`;
   }).join('');
   let head = '';
+  if (pred.fair) head = '<div class="small mut">ℹ️ Ye match pick-lock aane se pehle ka hai. Imaandaar ginti ke liye iski pick sirf pichhle dinon ke matches se nikali gayi hai.</div>';
   if (pred.locked) {
     const when = typeof pred.locked === 'number' ? new Date(pred.locked).toLocaleString() : '';
     head = `<div class="small">🔒 Ye pick match add karte waqt lock hui thi${when ? ` (${esc(when)})` : ''}. Baad ke results isse nahi badalte.</div>`;
@@ -1176,7 +1203,47 @@ $('#pickers').addEventListener('change', e => {
 $('#pickers').addEventListener('keydown', e => {
   if (e.key === 'Enter' && e.target.closest('input[data-name]')) e.target.blur();
 });
-['#t1', '#t2'].forEach(s => $(s).addEventListener('input', updatePickerTeams));
+['#t1', '#t2'].forEach(s => $(s).addEventListener('input', () => { updatePickerTeams(); teamHint(s.slice(1)); }));
+
+/* ---------- team name check ----------
+   The team-specific model learns per team name, so "SUDUR" and "SUDUR PASCHIM ROYALS" would be two teams.
+   A new name that looks like an existing one gets a one-click suggestion. */
+function editDistance(a, b) {
+  if (Math.abs(a.length - b.length) > 2) return 3;
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++)
+    d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return d[a.length][b.length];
+}
+function similarTeam(name) {
+  const n = E.norm(name).replace(/\s+/g, ' ');
+  if (n.length < 3) return null;
+  const known = [...new Map(state.matches.flatMap(m => [m.t1, m.t2]).map(t => [E.norm(t), t])).values()];
+  if (known.some(t => E.norm(t) === n)) return null;
+  const squash = s => E.norm(s).replace(/[^a-z0-9]/g, '');
+  let best = null, bestScore = 9;
+  known.forEach(t => {
+    const k = E.norm(t), a = squash(n), b = squash(t);
+    let sc = 9;
+    if (a === b) sc = 0;                                                     // only spaces / dots differ
+    else if (a.length >= 5 && b.length >= 5 && editDistance(a, b) <= 2) sc = 1; // small typo
+    else if (n.length >= 4 && (k.startsWith(n + ' ') || k.startsWith(n))) sc = 2; // short form of a longer name
+    if (sc < bestScore) { bestScore = sc; best = t; }
+  });
+  return best;
+}
+function teamHint(which) {
+  const box = $('#' + which + 'hint'), s = similarTeam($('#' + which).value);
+  box.innerHTML = s ? `Kya ye <button type="button" data-fill="${which}" data-team="${esc(s)}">${esc(s)}</button> hai?` : '';
+}
+['t1hint', 't2hint'].forEach(id => $('#' + id).addEventListener('click', e => {
+  const b = e.target.closest('button[data-fill]');
+  if (!b) return;
+  $('#' + b.dataset.fill).value = b.dataset.team;
+  $('#' + b.dataset.fill + 'hint').innerHTML = '';
+  updatePickerTeams();
+}));
 $('#btnAdd').addEventListener('click', submitForm);
 $('#btnCancel').addEventListener('click', resetForm);
 

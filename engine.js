@@ -7,9 +7,20 @@
 (function (root) {
   'use strict';
 
-  const ETA = 0.35;   // learning rate for model weights (higher = faster shift to winners)
-  const SHARE = 0.02; // keeps every model alive so the mix can re-adapt when patterns change
-  const CAL_LR = 0.05, CAL_MIN = 0.3, CAL_MAX = 3; // online confidence calibration
+  // Tunables (benchmarked; see run(matches, names, opts) to override for experiments).
+  const DEFAULTS = {
+    eta: 0.35,    // learning rate for model weights (higher = faster shift to winners)
+    share: 0.02,  // keeps every model alive so the mix can re-adapt when patterns change
+    calLr: 0.05,  // online confidence calibration speed
+    damp: 0.6,    // how much one expert's vote counts in the vote-combining models
+    prior: 4,     // pseudo-matches pulling a new expert's accuracy toward 50%
+    decay: 1,     // per-match fade of old results in expert accuracy (1 = never fade)
+    shrink: 0,    // confidence held back while little is known: × n / (n + shrink)
+    lrRate: 0.1,  // learning speed of the learned-weights model (0 = model switched off)
+    lrL2: 0.02,   // keeps learned weights small until there is evidence
+  };
+  const CAL_MIN = 0.3, CAL_MAX = 3;
+  let cfg = DEFAULTS;
 
   const MODELS = [
     { id: 'maj',  name: 'Simple Majority' },
@@ -19,6 +30,7 @@
     { id: 'form', name: 'Recent Form' },
     { id: 'team', name: 'Team-specific' },
     { id: 'h2h',  name: 'Head-to-Head' },
+    { id: 'lrn',  name: 'Learned Weights' },
   ];
 
   const BUCKETS = [
@@ -114,9 +126,10 @@
 
   function newStats(n) {
     const ex = [];
-    for (let i = 0; i < n; i++) ex.push({ c: 0, n: 0, paid: 0, paidRev: cnt(), hist: [], streak: 0, teams: {}, role: {}, cat: {} });
+    for (let i = 0; i < n; i++) ex.push({ c: 0, n: 0, dc: 0, dn: 0, paid: 0, paidRev: cnt(), hist: [], streak: 0, teams: {}, role: {}, cat: {} });
     // pair[i][j]: i right when i and j disagreed; agree[i][j]: both right when they agreed
-    return { size: n, n: 0, ex, pair: grid(n), agree: grid(n), split: {}, pattern: {} };
+    // lw: one learned weight per expert (online logistic regression on the votes)
+    return { size: n, n: 0, ex, pair: grid(n), agree: grid(n), split: {}, pattern: {}, lw: Array(n).fill(0) };
   }
 
   function update(S, m) {
@@ -127,6 +140,7 @@
       if (!isOpen(p)) return;
       const ok = p === r ? 1 : 0;
       e.c += ok; e.n++;
+      e.dc = e.dc * cfg.decay + ok; e.dn = e.dn * cfg.decay + 1;
       e.hist.push(ok);
       e.streak = ok ? (e.streak >= 0 ? e.streak + 1 : 1) : (e.streak <= 0 ? e.streak - 1 : -1);
       [norm(m.t1), norm(m.t2)].forEach(t => { const tc = get(e.teams, t); tc.c += ok; tc.n++; });
@@ -145,6 +159,13 @@
     s.n++; if (sp.majTeam !== null && sp.majTeam === r) s.c++;
     const pt = get(S.pattern, patternKey(P));
     pt.n++; if (P.find(isOpen) === r) pt.c++;
+    // learned weights: one gradient step on this match. Experts who move together share the credit,
+    // instead of each being counted in full as the vote-combining models do.
+    if (cfg.lrRate > 0) {
+      const x = F.map(p => (p === 0 ? 1 : p === 1 ? -1 : 0));
+      const z = x.reduce((a, v, i) => a + v * S.lw[i], 0), err = (r === 0 ? 1 : 0) - sig(z);
+      x.forEach((v, i) => { if (v) S.lw[i] += cfg.lrRate * (err * v - cfg.lrL2 * S.lw[i]); });
+    }
     S.n++;
   }
 
@@ -160,18 +181,19 @@
   function modelProbs(S, m) {
     const P = m.preds, out = {}, n = S.size;
     const sp = splitOf(P);
-    const overall = S.ex.map(e => rate(e.c, e.n, 0.5, 4));
+    const overall = S.ex.map(e => rate(e.dc, e.dn, 0.5, cfg.prior));
+    const damp = cfg.damp;
 
     out.maj = clamp(0.5 + 0.3 * (sp.v0 - sp.v1) / n, 0.05, 0.95);
 
-    out.acc = nb(P, overall, 0.6);
+    out.acc = nb(P, overall, damp);
 
     // exact situation record, backed off to the broad role bucket, backed off to overall accuracy
     out.role = nb(P, S.ex.map((e, i) => {
       if (!isOpen(P[i])) return 0.5;
       const ro = roleOf(P, i), c = e.cat[ro.cat] || cnt(), r = e.role[ro.key] || cnt();
       return rate(r.c, r.n, rate(c.c, c.n, overall[i], 3), 3);
-    }), 0.6);
+    }), damp);
 
     // Group memory: how often each agreeing pair was right together; the exact grouping's own
     // history (when it has repeated) refines that.
@@ -191,13 +213,13 @@
     out.form = nb(P, S.ex.map((e, i) => {
       const h = e.hist.slice(-8);
       return rate(h.reduce((a, b) => a + b, 0), h.length, overall[i], 2);
-    }), 0.6);
+    }), damp);
 
     const t1 = norm(m.t1), t2 = norm(m.t2);
     out.team = nb(P, S.ex.map((e, i) => {
       const a = e.teams[t1] || cnt(), b = e.teams[t2] || cnt();
       return rate(a.c + b.c, a.n + b.n, overall[i], 3);
-    }), 0.6);
+    }), damp);
 
     let z = 0, k = 0;
     for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
@@ -207,6 +229,8 @@
       k++;
     }
     out.h2h = k ? sig((z / k) * 1.5) : out.maj;
+
+    out.lrn = clamp(sig(P.reduce((a, p, i) => a + (p === 0 ? 1 : p === 1 ? -1 : 0) * S.lw[i], 0)), 0.02, 0.98);
 
     return out;
   }
@@ -237,10 +261,12 @@
         pick = m.preds[best];
       }
     }
-    const p = calibrate(pRaw, cal);
+    const pCal = calibrate(pRaw, cal);
+    // with little history, hold confidence back (the pick itself never changes)
+    const p = cfg.shrink > 0 ? 0.5 + (pCal - 0.5) * (S.n / (S.n + cfg.shrink)) : pCal;
     const conf = Math.max(p, 1 - p);
     const verdict = BUCKETS.find(b => conf >= b.min).lab;
-    return { p, pRaw, pick, conf, verdict, probs, w: { ...w }, n: S.n };
+    return { p, pCal, pRaw, pick, conf, verdict, probs, w: { ...w }, n: S.n };
   }
 
   function insights(S, m, names, pick) {
@@ -296,7 +322,8 @@
 
   // Walk-forward: every match is predicted using ONLY the matches before it,
   // so the accuracy shown for past matches is honest, not hindsight.
-  function run(matches, names) {
+  function run(matches, names, opts) {
+    cfg = opts ? { ...DEFAULTS, ...opts } : DEFAULTS;
     const n = names.length, S = newStats(n), lw = {};
     let cal = 1;
     MODELS.forEach(md => { lw[md.id] = 0; });
@@ -311,19 +338,20 @@
       if (isDone(m)) {
         MODELS.forEach(md => {
           const pa = m.result === 0 ? probs[md.id] : 1 - probs[md.id];
-          lw[md.id] += ETA * Math.log(clamp(pa, 0.02, 0.98));
+          lw[md.id] += cfg.eta * Math.log(clamp(pa, 0.02, 0.98));
         });
         const nw = weightsFrom(lw);
-        MODELS.forEach(md => { lw[md.id] = Math.log((1 - SHARE) * nw[md.id] + SHARE / MODELS.length); });
+        MODELS.forEach(md => { lw[md.id] = Math.log((1 - cfg.share) * nw[md.id] + cfg.share / MODELS.length); });
         const y = m.result === 0 ? 1 : 0;
-        cal = clamp(cal - CAL_LR * (pred.p - y) * logit(clamp(pred.pRaw, 1e-4, 1 - 1e-4)), CAL_MIN, CAL_MAX);
+        cal = clamp(cal - cfg.calLr * (pred.pCal - y) * logit(clamp(pred.pRaw, 1e-4, 1 - 1e-4)), CAL_MIN, CAL_MAX);
         update(S, m);
       }
     }
-    return { rows, S, w: weightsFrom(lw), cal, size: n };
+    return { rows, S, w: weightsFrom(lw), cal, size: n, cfg };
   }
 
   function predictWith(R, raw, names) {
+    cfg = R.cfg || DEFAULTS;
     const m = fit(raw, R.size);
     const probs = modelProbs(R.S, m);
     const pred = finalize(mix(probs, R.w), R.cal, probs, R.w, m, R.S);
