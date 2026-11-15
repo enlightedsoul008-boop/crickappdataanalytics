@@ -224,7 +224,7 @@
 <div class="lock">
   <div class="lockbox">
     <div class="logo">🏏</div>
-    <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v16</span></h1>
+    <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v17</span></h1>
     <div class="mut small" id="lockSub">Connecting…</div>
     <form id="loginForm" autocomplete="on" hidden>
       <div class="field"><label for="email">Email</label><input id="email" type="email" autocomplete="username" placeholder="you@gmail.com" required></div>
@@ -271,7 +271,7 @@
     <div class="brand">
       <div class="logo">🏏</div>
       <div>
-        <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v16</span></h1>
+        <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v17</span></h1>
         <div class="small"><span class="sync" id="sync">Connecting</span> <span class="mut sub" id="who"></span></div>
       </div>
     </div>
@@ -327,8 +327,8 @@
 </main>
 
 <!-- ?v= forces browsers / GitHub Pages cache to fetch the matching engine for this page version -->
-<script src="engine.js?v=16"></script>
-<script src="firebase-config.js?v=16"></script>
+<script src="engine.js?v=17"></script>
+<script src="firebase-config.js?v=17"></script>
 <script>
   // If the Firebase module never starts (no internet, or opened as a local file), say so instead of hanging.
   setTimeout(() => {
@@ -409,10 +409,30 @@ const baseFields = d => ({
   date: typeof d.date === 'string' ? d.date : '', note: typeof d.note === 'string' ? d.note : '',
   result: [0, 1, 'NR'].includes(d.result) ? d.result : null,
 });
+/* Locked prediction ("sys"): the pick the system showed when the match was entered. Results of other
+   matches that arrive later would otherwise change a still-open match's pick, and then accuracy would
+   be counted against a pick the user never saw. So WIN/LOSS, accuracy and confidence stats use this. */
+const MODEL_IDS = E.MODELS.map(x => x.id);
+function readSys(s) {
+  if (!s || typeof s !== 'object' || !E.isOpen(s.pick) || !(s.conf >= 0.5 && s.conf <= 1) || !E.BUCKETS.some(b => b.lab === s.verdict)) return null;
+  const nums = o => !!o && typeof o === 'object' && MODEL_IDS.every(k => typeof o[k] === 'number' && isFinite(o[k]));
+  return {
+    pick: s.pick, p: typeof s.p === 'number' && isFinite(s.p) ? s.p : (s.pick === 0 ? s.conf : 1 - s.conf),
+    conf: s.conf, verdict: s.verdict, probs: nums(s.probs) ? { ...s.probs } : null, w: nums(s.w) ? { ...s.w } : null,
+    insights: Array.isArray(s.insights) ? s.insights.filter(x => typeof x === 'string').slice(0, 20) : [],
+    at: typeof s.at === 'number' ? s.at : 0,
+  };
+}
+const makeSys = pr => ({ pick: pr.pick, p: pr.p, conf: pr.conf, verdict: pr.verdict, probs: { ...pr.probs }, w: { ...pr.w },
+  insights: pr.insights.slice(0, 20), at: Date.now() });
+// team 1 / team 2 swapped in an edit → the locked pick follows its team
+const flipSys = s => ({ ...s, pick: 1 - s.pick, p: 1 - s.p,
+  probs: s.probs && Object.fromEntries(Object.entries(s.probs).map(([k, v]) => [k, 1 - v])) });
+
 // stored match → the positional row the engine and UI work with, in the current expert order
 function toRow(d, order) {
   const { picks, rev } = docPicks(d);
-  return { ...baseFields(d),
+  return { ...baseFields(d), sys: readSys(d.sys),
     preds: order.map(id => (id in picks ? picks[id] : -1)), revealed: order.map(id => (id in rev ? rev[id] : null)) };
 }
 // positional row → stored match (only for experts that exist now)
@@ -424,8 +444,8 @@ function toDoc(m, order, seq) {
     picks[id] = p;
     if (p === null && m.revealed && E.isOpen(m.revealed[i])) rev[id] = m.revealed[i];
   });
-  const b = baseFields(m);
-  return { ...b, seq: seq !== undefined ? seq : (b.seq || Date.now()), picks, rev };
+  const b = baseFields(m), sys = readSys(m.sys);
+  return { ...b, seq: seq !== undefined ? seq : (b.seq || Date.now()), picks, rev, ...(sys ? { sys } : {}) };
 }
 
 let state = { experts: defaultExperts(), matches: [] };
@@ -597,6 +617,23 @@ function dataChanged() {
   }
   if (first) offerLocalMigration();
   purgeGone(); // finishes any expert deletion that was cut short
+  lockOpenMatches();
+}
+
+// Open matches saved by older versions have no locked pick yet: lock what the system says now,
+// so from here on other results can no longer change them. Tried once per match per session.
+const lockTried = new Set();
+function lockOpenMatches() {
+  if (!user || !R) return;
+  const todo = state.matches.filter(m => m.result === null && !m.sys && m.preds.some(E.isOpen) && !lockTried.has(m.id));
+  if (!todo.length) return;
+  const order = ids();
+  const ops = todo.map(m => {
+    lockTried.add(m.id);
+    const doc = toDoc({ ...m, sys: makeSys(E.predictWith(R, m, names())) }, order);
+    return b => b.set(matchDoc(m.id), doc);
+  });
+  write(runBatches(ops));
 }
 
 // Removes every trace of deleted experts from the matches. A match left with no open prediction from
@@ -613,7 +650,11 @@ async function purgeGone() {
     Object.keys(rev).forEach(k => { if (k in picks2) rev2[k] = rev[k]; });
     const id = String(d.id);
     if (!Object.keys(picks2).some(k => keepIds.has(k) && E.isOpen(picks2[k]))) ops.push(b => b.delete(matchDoc(id)));
-    else ops.push(b => b.set(matchDoc(id), { ...baseFields(d), picks: picks2, rev: rev2 }));
+    else {
+      // keep the locked pick (it is history), but drop its reason texts: they can carry the deleted name
+      const sys = readSys(d.sys);
+      ops.push(b => b.set(matchDoc(id), { ...baseFields(d), picks: picks2, rev: rev2, ...(sys ? { sys: { ...sys, insights: [] } } : {}) }));
+    }
   });
   purging = true;
   try {
@@ -839,6 +880,14 @@ function resetForm() {
   renderPickers();
 }
 
+// knowledge to lock a pick with: an open match uses everything known now; a settled one only the matches
+// before it, so it can never "know" its own result
+function freezeContext(m) {
+  if (m.result === null) return R;
+  const idx = state.matches.findIndex(x => x.id === m.id);
+  return E.run(state.matches.slice(0, idx < 0 ? state.matches.length : idx), names());
+}
+
 async function submitForm() {
   const t1 = $('#t1').value.trim(), t2 = $('#t2').value.trim();
   if (!t1 || !t2) return alert('Dono team ka naam daalo.');
@@ -857,8 +906,15 @@ async function submitForm() {
     const cur = state.matches.find(x => x.id === old.id); // re-read: data can change while the password box is open
     if (!cur) { alert('Ye match server se delete ho chuka hai, edit save nahi hua.'); return resetForm(); }
     m = E.mergeEdit(cur, data);
+    const swapped = E.norm(t1) === E.norm(cur.t2) && E.norm(t2) === E.norm(cur.t1);
+    const flip = p => (E.isOpen(p) ? 1 - p : p);
+    const sameCall = JSON.stringify(swapped ? cur.preds.map(flip) : cur.preds) === JSON.stringify(data.preds);
+    // same expert calls (only names / date / note / revealed changed) → keep the pick that was shown;
+    // corrected calls → lock again, from what was known before this match only
+    m.sys = cur.sys && sameCall ? (swapped ? flipSys(cur.sys) : cur.sys) : makeSys(E.predictWith(freezeContext(cur), m, names()));
   } else {
     m = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), seq: Date.now(), result: null, ...data };
+    m.sys = makeSys(E.predictWith(R, m, names())); // exactly what the preview box showed
   }
   write(setDoc(matchDoc(m.id), toDoc(m, ids())));
   resetForm();
@@ -881,6 +937,14 @@ function editMatch(id) {
 // keepPickers: re-render everything except the expert cards (so typing a name doesn't lose focus)
 function renderAll(keepPickers) {
   R = E.run(state.matches, names());
+  // the engine re-predicts every match from history (that is how it learns); what is shown and scored
+  // is the pick that was locked when the match was entered
+  R.rows = R.rows.map(r => {
+    const s = r.m.sys;
+    if (!s) return r;
+    return { m: r.m, pred: { ...r.pred, pick: s.pick, p: s.p, conf: s.conf, verdict: s.verdict,
+      probs: s.probs || r.pred.probs, w: s.w || r.pred.w, insights: s.insights.length ? s.insights : r.pred.insights, locked: s.at || true } };
+  });
   EV = E.evaluate(R.rows);
   renderKpis(); renderTable();
   if (keepPickers) renderPreview(); else renderPickers();
@@ -965,7 +1029,18 @@ function detailsHtml(pred, m) {
     return `<tr><td>${md.name}</td><td>${esc(tn[pk])} ${pct(Math.max(p, 1 - p))}</td>
       <td><div class="bar"><i style="width:${(pred.w[md.id] * 100).toFixed(1)}%"></i></div></td><td>${pct(pred.w[md.id])}</td></tr>`;
   }).join('');
-  return `<ul class="ins">${pred.insights.map(x => `<li>${esc(x)}</li>`).join('')}</ul>
+  let head = '';
+  if (pred.locked) {
+    const when = typeof pred.locked === 'number' ? new Date(pred.locked).toLocaleString() : '';
+    head = `<div class="small">🔒 Ye pick match add karte waqt lock hui thi${when ? ` (${esc(when)})` : ''}. Baad ke results isse nahi badalte.</div>`;
+    if (m.result === null) {
+      const now = E.predictWith(R, m, names());
+      head += now.pick === pred.pick
+        ? `<div class="small mut">📈 Latest data se bhi system yahi bolta hai: <b>${esc(tn[now.pick])}</b> (${pct(now.conf)}).</div>`
+        : `<div class="small" style="color:var(--warn)">📈 Naye results ke baad system ab <b>${esc(tn[now.pick])}</b> (${pct(now.conf)}) bolta hai — lekin is match ki locked pick <b>${esc(tn[pred.pick])}</b> hi ginegi.</div>`;
+    }
+  }
+  return `${head}<ul class="ins">${pred.insights.map(x => `<li>${esc(x)}</li>`).join('')}</ul>
     <table style="margin-top:8px;max-width:640px"><thead><tr><th>Model</th><th>Says</th><th>Weight</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
