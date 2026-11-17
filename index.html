@@ -121,6 +121,8 @@
   tr.abd > td:not(:nth-last-child(-n+3)) { opacity: .45; }
   button.link.abdbtn { color: var(--warn); }
   tr.det > td { white-space: normal; background: var(--panel2) !important; }
+  /* the table scrolls sideways when there are many experts: keep the details inside the visible part */
+  .detbox { position: sticky; left: 10px; width: min(720px, calc(100vw - 90px)); }
   .ok { color: var(--good); } .no { color: var(--bad); }
   .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 800; letter-spacing: .4px; }
   .STRONG { background: rgba(47,191,113,.16); color: var(--good); }
@@ -228,7 +230,7 @@
 <div class="lock">
   <div class="lockbox">
     <div class="logo">🏏</div>
-    <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v18</span></h1>
+    <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v20</span></h1>
     <div class="mut small" id="lockSub">Connecting…</div>
     <form id="loginForm" autocomplete="on" hidden>
       <div class="field"><label for="email">Email</label><input id="email" type="email" autocomplete="username" placeholder="you@gmail.com" required></div>
@@ -275,7 +277,7 @@
     <div class="brand">
       <div class="logo">🏏</div>
       <div>
-        <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v18</span></h1>
+        <h1>Cricket Expert Predictor <span class="mut small" style="font-weight:400">v20</span></h1>
         <div class="small"><span class="sync" id="sync">Connecting</span> <span class="mut sub" id="who"></span></div>
       </div>
     </div>
@@ -331,8 +333,8 @@
 </main>
 
 <!-- ?v= forces browsers / GitHub Pages cache to fetch the matching engine for this page version -->
-<script src="engine.js?v=18"></script>
-<script src="firebase-config.js?v=18"></script>
+<script src="engine.js?v=20"></script>
+<script src="firebase-config.js?v=20"></script>
 <script>
   // If the Firebase module never starts (no internet, or opened as a local file), say so instead of hanging.
   setTimeout(() => {
@@ -1043,12 +1045,51 @@ function renderTable() {
       <td data-label="Status">${mark}</td>
       <td class="acts wide nolabel">${m.result === null ? `<button class="link abdbtn" data-act="abd" data-id="${esc(m.id)}">🚫 Abandoned</button>` : ''}<button class="link" data-act="det" data-id="${esc(m.id)}">Why?</button><button class="link" data-act="edit" data-id="${esc(m.id)}">Edit</button><button class="link" data-act="del" data-id="${esc(m.id)}">🗑</button></td>
     </tr>
-    <tr class="det" data-det="${esc(m.id)}" ${openDetails.has(m.id) ? '' : 'hidden'}><td colspan="${9 + vis.length}">${detailsHtml(pred, m)}</td></tr>`;
+    <tr class="det" data-det="${esc(m.id)}" ${openDetails.has(m.id) ? '' : 'hidden'}><td colspan="${9 + vis.length}">${detailsHtml(pred, m, openDetails.has(m.id))}</td></tr>`;
   }
   $('#tbl').innerHTML = h + '</tbody>';
 }
 
-function detailsHtml(pred, m) {
+// Expert records as they stood when this match was decided: today's for an open match,
+// only the matches before it for a settled one (so the list never "knows" this match's own result).
+let beforeCache = { src: null, map: new Map() };
+function statsAt(m) {
+  if (m.result === null) return R.S;
+  if (beforeCache.src !== state.matches) beforeCache = { src: state.matches, map: new Map() };
+  if (!beforeCache.map.has(m.id)) {
+    const idx = state.matches.findIndex(x => x.id === m.id);
+    beforeCache.map.set(m.id, E.run(state.matches.slice(0, idx < 0 ? state.matches.length : idx), names()).S);
+  }
+  return beforeCache.map.get(m.id);
+}
+// Top 6 experts (by record) among those with an open pick in this match, and where their majority lies.
+function topExpertsHtml(pred, m) {
+  const N = names(), tn = [m.t1, m.t2], S = statsAt(m);
+  // ranked on a smoothed rate, so 1/1 does not outrank 30/45; ties → more matches first
+  const score = e => (e.c + 1) / (e.n + 2);
+  const list = m.preds.map((p, i) => ({ i, p, e: S.ex[i] })).filter(x => E.isOpen(x.p))
+    .sort((a, b) => score(b.e) - score(a.e) || b.e.n - a.e.n).slice(0, 6);
+  if (!list.length) return '';
+  const v = [0, 0];
+  list.forEach(x => { v[x.p]++; });
+  const maj = v[0] > v[1] ? 0 : v[1] > v[0] ? 1 : null;
+  const rows = list.map((x, k) => `<tr><td class="mut">${k + 1}</td>
+    <td style="${ec(x.i)}"><span class="dot"></span><b>${esc(N[x.i])}</b></td>
+    <td>${x.e.n ? `${pct(x.e.c / x.e.n)} <span class="mut small">(${x.e.c}/${x.e.n})</span>` : '<span class="mut">—</span>'}${x.e.n < 5 ? ' <span class="small" style="color:var(--warn)">kam data</span>' : ''}</td>
+    <td><span class="chip">${esc(tn[x.p])}</span></td></tr>`).join('');
+  const verdict = maj === null
+    ? `Top ${list.length} me barabar: <b>${v[0]}–${v[1]}</b>`
+    : `Top ${list.length} me majority: <b>${esc(tn[maj])}</b> (${v[maj]}–${v[1 - maj]})`;
+  const vsSystem = maj === null ? '' : maj === pred.pick
+    ? ' · system bhi isi taraf hai'
+    : ` · <b style="color:var(--warn)">⚠️ system (${esc(tn[pred.pick])}) iske opposite hai</b>`;
+  return `<div style="margin:10px 0 4px"><b>🏅 Top experts (accuracy high → low)</b>
+    <span class="mut small">· sirf open prediction wale · ${m.result === null ? 'aaj tak ka record' : 'is match se pehle tak ka record'}</span></div>
+    <table style="max-width:640px"><thead><tr><th>#</th><th>Expert</th><th>Accuracy</th><th>Pick</th></tr></thead><tbody>${rows}</tbody></table>
+    <div class="small" style="margin-top:6px">${verdict}${vsSystem}</div>`;
+}
+
+function detailsHtml(pred, m, full) {
   const tn = [m.t1, m.t2];
   const rows = E.MODELS.map(md => {
     const p = pred.probs[md.id], pk = p >= 0.5 ? 0 : 1;
@@ -1067,8 +1108,8 @@ function detailsHtml(pred, m) {
         : `<div class="small" style="color:var(--warn)">📈 Naye results ke baad system ab <b>${esc(tn[now.pick])}</b> (${pct(now.conf)}) bolta hai — lekin is match ki locked pick <b>${esc(tn[pred.pick])}</b> hi ginegi.</div>`;
     }
   }
-  return `${head}<ul class="ins">${pred.insights.map(x => `<li>${esc(x)}</li>`).join('')}</ul>
-    <table style="margin-top:8px;max-width:640px"><thead><tr><th>Model</th><th>Says</th><th>Weight</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  return `<div class="detbox">${head}${full ? topExpertsHtml(pred, m) : ''}<ul class="ins">${pred.insights.map(x => `<li>${esc(x)}</li>`).join('')}</ul>
+    <table style="margin-top:8px;max-width:640px"><thead><tr><th>Model</th><th>Says</th><th>Weight</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 function renderExperts() {
@@ -1373,7 +1414,10 @@ $('#tbl').addEventListener('click', async e => {
   const id = b.dataset.id, act = b.dataset.act;
   if (act === 'det') {
     openDetails.has(id) ? openDetails.delete(id) : openDetails.add(id);
-    document.querySelector(`tr[data-det="${CSS.escape(id)}"]`).hidden = !openDetails.has(id);
+    const tr = document.querySelector(`tr[data-det="${CSS.escape(id)}"]`), row = R.rows.find(r => r.m.id === id);
+    // the top-experts list is built only when opened (it may need a history replay)
+    if (openDetails.has(id) && row) tr.firstElementChild.innerHTML = detailsHtml(row.pred, row.m, true);
+    tr.hidden = !openDetails.has(id);
   } else if (act === 'abd') {
     if (confirm('Ye match ABANDONED mark karna hai? Ye settle hoke lock ho jayega aur accuracy / learning me count nahi hoga.'))
       write(updateDoc(matchDoc(id), { result: 'NR' }));
